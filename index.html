@@ -885,7 +885,7 @@ function drawShips(){
 
 function settingsControls(backFn,allowReset){   // shared by the start-menu Settings panel and the in-game pause menu
   const rowW=420,x=(W-rowW)/2; let y=132;
-  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("MASTER VOLUME",x,y-8);
+  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("SOUND EFFECTS",x,y-8);
   const tx=x,ty=y+4,tw=rowW,th=14; bar(tx,ty,tw,th,Sound.getVol(),"#54f0ff","#0a1430");
   ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(Sound.getVol()*100)+"%",x+rowW,y-8);
   uiRects.push({x:tx,y:ty-8,w:tw,h:th+16,on:()=>{ const v=clamp((mouse.x-tx)/tw,0,1); Sound.setVol(v); saveOpt("vr_vol",v); }});
