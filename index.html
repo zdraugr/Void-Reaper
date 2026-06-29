@@ -125,8 +125,8 @@ const SHIP_SPR={
 for(const s of SHIPS){ const c=bake(SHIP_SPR[s.id]||SPR.player,4,false,{"1":s.color}); shipCanvas[s.id]={c,w:c.width,h:c.height}; }
 
 /* ---------------- sound ---------------- */
-const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,bgm=null; const thr={};
-  function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=vol*0.55; bgm.muted=muted; bgm.play().catch(()=>{}); }
+const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,bgm=null; const thr={};
+  function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=musicVol; bgm.muted=muted; bgm.play().catch(()=>{}); }
   function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=vol; master.connect(ac.destination);
     const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; startMusic(); }
   function resume(){ if(ac&&ac.state==="suspended")ac.resume(); if(bgm&&bgm.paused&&!muted)bgm.play().catch(()=>{}); } const t=()=>ac.currentTime;
@@ -134,7 +134,8 @@ const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,bgm=nu
   function noise(d,v,cut){ if(!ac||muted)return; const s=ac.createBufferSource(); s.buffer=nbuf; const g=ac.createGain(),f=ac.createBiquadFilter(); f.type="lowpass"; f.frequency.setValueAtTime(cut,t()); f.frequency.exponentialRampToValueAtTime(120,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(t()+d); }
   function gate(k,ms){ const n=performance.now(); if((thr[k]||0)>n)return false; thr[k]=n+ms; return true; }
   return { init,resume, toggle(){muted=!muted;if(bgm)bgm.muted=muted;return muted;},
-    setVol(v){ vol=clamp(v,0,1); if(master)master.gain.value=vol; if(bgm)bgm.volume=vol*0.55; }, getVol(){ return vol; },
+    setVol(v){ vol=clamp(v,0,1); if(master)master.gain.value=vol; }, getVol(){ return vol; },
+    setMusicVol(v){ musicVol=clamp(v,0,1); if(bgm)bgm.volume=musicVol; }, getMusicVol(){ return musicVol; },
     setMuted(m){ muted=!!m; if(bgm)bgm.muted=muted; }, isMuted(){ return muted; },
     shoot(){ if(gate("s",55))tone(880,.07,"square",.10,300); },
     pop(){ if(gate("p",45))noise(.08,.18,1600); },
@@ -168,7 +169,7 @@ let bossKills=0, resetArm=0;                     // bosses slain this run; reset
 let shakeEnabled = Store.get("vr_shake",true);   // settings: camera shake on/off
 // settings that aren't "progress" persist even while DEV sandbox is on (bypass the Store DEV-guard)
 function saveOpt(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
-Sound.setVol(Store.get("vr_vol",0.45)); Sound.setMuted(Store.get("vr_mute",false));
+Sound.setVol(Store.get("vr_vol",0.45)); Sound.setMusicVol(Store.get("vr_musicvol",0.4)); Sound.setMuted(Store.get("vr_mute",false));
 
 const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0 };
@@ -869,6 +870,11 @@ function settingsControls(backFn,allowReset){   // shared by the start-menu Sett
   const tx=x,ty=y+4,tw=rowW,th=14; bar(tx,ty,tw,th,Sound.getVol(),"#54f0ff","#0a1430");
   ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(Sound.getVol()*100)+"%",x+rowW,y-8);
   uiRects.push({x:tx,y:ty-8,w:tw,h:th+16,on:()=>{ const v=clamp((mouse.x-tx)/tw,0,1); Sound.setVol(v); saveOpt("vr_vol",v); }});
+  y+=56;
+  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("MUSIC VOLUME",x,y-8);
+  const mty=y+4; bar(tx,mty,tw,th,Sound.getMusicVol(),"#ff6ad5","#0a1430");
+  ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(Sound.getMusicVol()*100)+"%",x+rowW,y-8);
+  uiRects.push({x:tx,y:mty-8,w:tw,h:th+16,on:()=>{ const v=clamp((mouse.x-tx)/tw,0,1); Sound.setMusicVol(v); saveOpt("vr_musicvol",v); }});
   y+=56;
   toggleRow("SOUND",!Sound.isMuted(),x,y,rowW,()=>{ const m=Sound.toggle(); saveOpt("vr_mute",m); }); y+=48;
   toggleRow("SCREEN SHAKE",shakeEnabled,x,y,rowW,()=>{ shakeEnabled=!shakeEnabled; saveOpt("vr_shake",shakeEnabled); }); y+=48;
