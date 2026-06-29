@@ -455,6 +455,13 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
 addEventListener("keyup",e=>{ keys[e.code]=false; });
 document.addEventListener("visibilitychange",()=>{ if(document.hidden&&state==="playing") state="paused"; });
 /* ---- gamepad: left stick/d-pad move · A dash/confirm · B back/decline · Start pause · d-pad/stick + A navigate menus ---- */
+// spatial menu nav: move focus to the nearest uiRect in the pressed direction (dx,dy)
+function navStep(dx,dy){ if(uiRects.length<2)return; const cur=uiRects[navIdx]||uiRects[0],cx=cur.x+cur.w/2,cy=cur.y+cur.h/2;
+  let best=-1,bs=Infinity;
+  for(let i=0;i<uiRects.length;i++){ if(i===navIdx)continue; const r=uiRects[i],ox=r.x+r.w/2-cx,oy=r.y+r.h/2-cy,along=ox*dx+oy*dy;
+    if(along<=2)continue; const perp=Math.abs(ox*dy-oy*dx); if(perp>along+40)continue;   // candidate within a cone of the direction
+    const s=along+perp*0.5; if(s<bs){ bs=s; best=i; } }
+  if(best>=0)navIdx=best; }
 function pollGamepad(){ let gp=null; const pads=navigator.getGamepads?navigator.getGamepads():[];
   for(const g of pads){ if(g){ gp=g; break; } }
   padConnected=!!gp; padMoveX=0; padMoveY=0;
@@ -471,9 +478,14 @@ function pollGamepad(){ let gp=null; const pads=navigator.getGamepads?navigator.
   if(sy<-0.5&&!padPrev._ny)nUp=true; if(sy>0.5&&!padPrev._ny)nDn=true; padPrev._ny=Math.abs(sy)>0.4;
   if(sx<-0.5&&!padPrev._nx)nLf=true; if(sx>0.5&&!padPrev._nx)nRt=true; padPrev._nx=Math.abs(sx)>0.4;
   if(state==="playing"){ if(A)tryBoost(); if(START){ state="paused"; pausePanel="root"; } }
-  else if(state==="levelup"){ const n=3+(rerolls>0?1:0); if(nLf)navIdx=(navIdx+n-1)%n; if(nRt)navIdx=(navIdx+1)%n; navIdx=((navIdx%n)+n)%n; if(A){ if(navIdx<3)choose(navIdx); else doReroll(); } }
+  else if(state==="levelup"){ const hasR=rerolls>0;   // 3 cards in a row + reroll below
+    if(nLf&&navIdx>0&&navIdx<3)navIdx--; if(nRt&&navIdx<2)navIdx++;
+    if(nDn&&hasR)navIdx=3; if(nUp&&navIdx===3)navIdx=1; navIdx=clamp(navIdx,0,hasR?3:2);
+    if(A){ if(navIdx<3)choose(navIdx); else doReroll(); } }
   else if(state==="quest"){ if(A)acceptQuest(); if(B)declineQuest(); }
-  else if(state==="paused"||state==="start"){ const n=uiRects.length; if(n){ if(nUp)navIdx=(navIdx+n-1)%n; if(nDn)navIdx=(navIdx+1)%n; navIdx=((navIdx%n)+n)%n; if(A&&uiRects[navIdx]&&uiRects[navIdx].on)uiRects[navIdx].on(); }
+  else if(state==="paused"||state==="start"){ if(uiRects.length){ navIdx=clamp(navIdx,0,uiRects.length-1);
+      if(nUp)navStep(0,-1); if(nDn)navStep(0,1); if(nLf)navStep(-1,0); if(nRt)navStep(1,0);
+      if(A&&uiRects[navIdx]&&uiRects[navIdx].on)uiRects[navIdx].on(); }
     if(B){ if(state==="paused"){ if(pausePanel==="settings")pausePanel="root"; else state="playing"; } else if(state==="start"&&menu!=="main")menu="main"; } }
   else if(state==="gameover"){ if(A){ state="start"; menu="main"; } } }
 function canvasPos(ev){ const r=cv.getBoundingClientRect(); return {x:(ev.clientX-r.left)*(W/r.width),y:(ev.clientY-r.top)*(H/r.height)}; }
@@ -814,9 +826,12 @@ function panelBtn(label,x,y,w,h,on,opts){ opts=opts||{}; const r={x,y,w,h,on},ho
   ctx.lineWidth=hov?3:2; ctx.strokeStyle=opts.color||(hov?"#54f0ff":"#2a3a66"); ctx.strokeRect(x+1,y+1,w-2,h-2);
   ctx.textAlign="center"; ctx.fillStyle=opts.text||"#cfe"; ctx.font=opts.font||"bold 16px 'Courier New',monospace"; ctx.fillText(label,x+w/2,y+h/2+5); return r; }
 function backBtn(){ panelBtn("‹ BACK",24,H-52,120,32,()=>{ menu="main"; resetArm=0; },{font:"bold 14px 'Courier New',monospace"}); }
-function toggleRow(label,on,x,y,w,onClick){
+function toggleRow(label,on,x,y,w,onClick){   // full-width clickable row (so mouse + controller nav both treat it as one row)
+  const r={x,y,w,h:30,on:onClick},hov=inside(mouse,r); uiRects.push(r);
   ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText(label,x,y+21);
-  panelBtn(on?"ON":"OFF",x+w-90,y,90,30,onClick,{color:on?"#46e85a":"#5a2a2a",text:on?"#7CFFA0":"#cc9",font:"bold 14px 'Courier New',monospace"}); }
+  const bx=x+w-90; ctx.fillStyle=hov?"rgba(20,30,60,0.95)":"rgba(10,16,36,0.92)"; ctx.fillRect(bx,y,90,30);
+  ctx.strokeStyle=on?"#46e85a":"#5a2a2a"; ctx.lineWidth=2; ctx.strokeRect(bx+1,y+1,88,28);
+  ctx.textAlign="center"; ctx.fillStyle=on?"#7CFFA0":"#cc9"; ctx.font="bold 14px 'Courier New',monospace"; ctx.fillText(on?"ON":"OFF",bx+45,y+20); }
 
 function drawStart(){ uiRects=[];
   if(menu==="ships") drawShips();
