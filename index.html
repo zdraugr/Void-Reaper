@@ -167,13 +167,13 @@ const WDEF={
   blaster:{name:"Pulse Blaster",max:5,color:"#54f0ff",desc:"Auto-fires bolts at the nearest foe.",evoReq:"coolant",evoId:"railgun"},
   drones:{name:"Orbit Drones",max:5,color:"#46e85a",desc:"Drones circle you, shredding what they touch.",evoReq:"magnet",evoId:"halo"},
   aura:{name:"Plasma Field",max:5,color:"#ff5ff0",desc:"A searing aura burns everything near you.",evoReq:"reactor",evoId:"singularity"},
-  scatter:{name:"Scatter Cannon",max:5,color:"#ffd400",desc:"A spread of pellets in your travel direction.",evoReq:"engine",evoId:"nova"},
+  scatter:{name:"Scattershot",max:5,color:"#ffd400",desc:"Pellets scatter outward in every direction.",evoReq:"engine",evoId:"nova"},
   missiles:{name:"Seeker Pods",max:5,color:"#ff9a00",desc:"Homing missiles that detonate on impact.",evoReq:"amp",evoId:"hunter"},
   lightning:{name:"Arc Coil",max:5,color:"#bff6ff",desc:"Chains lightning to nearby enemies.",evoReq:"nanobots",evoId:"tempest"},
   railgun:{name:"Rail Lance",color:"#bff6ff",desc:"A piercing rail bolt that runs the whole swarm through.",evolved:true},
   halo:{name:"Halo Swarm",color:"#46e85a",desc:"Eight heavy drones in a wide, lethal ring.",evolved:true},
   singularity:{name:"Singularity",color:"#ff5ff0",desc:"A vast field that drags foes in and melts them.",evolved:true},
-  nova:{name:"Nova Burst",color:"#ffd400",desc:"Pellets erupt in every direction at once.",evolved:true},
+  nova:{name:"Nova Burst",color:"#ffd400",desc:"Twin piercing rings sweep outward in every direction.",evolved:true},
   hunter:{name:"Hunter Swarm",color:"#ff9a00",desc:"A volley of seekers with bigger blasts.",evolved:true},
   tempest:{name:"Tempest",color:"#bff6ff",desc:"Lightning forks across the entire mob.",evolved:true}
 };
@@ -217,8 +217,11 @@ function fireWeapons(dt){
           for(const t of ts){ const a=Math.atan2(t.y-player.y,t.x-player.x); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*520,vy:Math.sin(a)*520,dmg,pierce,r:7,life:1.4,color:"#bff6ff",kind:"bolt"}); } if(ts.length)Sound.shoot(); }
       } break;
       case "scatter": if(w.timer<=0){
-        if(evo){ w.timer=0.7*cdMult(); const dmg=18*dmgMult(); for(let i=0;i<16;i++){ const a=i/16*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*440,vy:Math.sin(a)*440,dmg,pierce:0,r:6,life:0.8,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
-        else { w.timer=1.25*cdMult(); const pel=3+lv,base=player.facing,dmg=(5+3*lv)*dmgMult(); for(let i=0;i<pel;i++){ const a=base+(i/(pel-1)-0.5); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.55,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
+        if(evo){ w.timer=0.7*cdMult(); const dmg=18*dmgMult(),off=rand(0,TAU);  // twin piercing rings, expanding double wave
+          for(let ring=0;ring<2;ring++){ const sp=ring?520:360,half=ring?TAU/32:0;
+            for(let i=0;i<16;i++){ const a=off+half+i/16*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg,pierce:4,r:7,life:1.0,color:"#ffd400",kind:"bolt"}); } } Sound.shoot(); }
+        else { w.timer=1.25*cdMult(); const pel=5+lv,off=rand(0,TAU),dmg=(5+3*lv)*dmgMult();  // 360° ring around the ship
+          for(let i=0;i<pel;i++){ const a=off+i/pel*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.6,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
       } break;
       case "missiles": if(w.timer<=0){
         let count,dmg,blast,cd; if(evo){count=6;dmg=38*dmgMult();blast=52;cd=0.9;} else {count=1+Math.floor(lv/2);dmg=(14+7*lv)*dmgMult();blast=36;cd=1.5;}
@@ -545,7 +548,7 @@ function drawIcon(c,cx,cy,r){ ctx.save(); ctx.translate(cx,cy); ctx.strokeStyle=
   if(id==="blaster"){ ctx.fillRect(-3,-r,6,r*2); }
   else if(id==="drones"){ ring(r*0.8); ctx.beginPath(); ctx.arc(r*0.8,0,4,0,TAU); ctx.fill(); ctx.beginPath(); ctx.arc(-r*0.8,0,4,0,TAU); ctx.fill(); }
   else if(id==="aura"){ ring(r*0.55); ring(r*0.95); }
-  else if(id==="scatter"){ for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.arc(i*r*0.5,r*0.4,3,0,TAU); ctx.fill(); } }
+  else if(id==="scatter"){ for(let i=0;i<6;i++){ const a=i/6*TAU; ctx.beginPath(); ctx.arc(Math.cos(a)*r*0.7,Math.sin(a)*r*0.7,2.5,0,TAU); ctx.fill(); } }
   else if(id==="missiles"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.6,r*0.6); ctx.lineTo(-r*0.6,r*0.6); ctx.closePath(); ctx.fill(); }
   else if(id==="lightning"){ ctx.beginPath(); ctx.moveTo(-r*0.4,-r); ctx.lineTo(r*0.2,-r*0.1); ctx.lineTo(-r*0.2,0); ctx.lineTo(r*0.4,r); ctx.stroke(); }
   else if(id==="engine"){ for(let i=0;i<2;i++){ ctx.beginPath(); ctx.moveTo(-r*0.6,-r*0.4+i*r*0.7); ctx.lineTo(0,r*0.1+i*r*0.7); ctx.lineTo(r*0.6,-r*0.4+i*r*0.7); ctx.stroke(); } }
