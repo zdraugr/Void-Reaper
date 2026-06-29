@@ -162,7 +162,8 @@ const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0 };
 let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[];
 let spawnTimer=0, eliteTimer=0, asteroidTimer=0, bossTimer=0, bossCount=0;
-let planets=[], quest=null, questOffer=null, questCooldown=0;   // quests & planets
+let planets=[], quest=null, questOffer=null, questCooldown=0, questOnPlanet=null;   // quests & planets
+let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
 const stars=[]; let prevX=0, prevY=0;
 for(let i=0;i<170;i++){ const L=i%3; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.25,0.55,1.0][L],sz:[1,1,2][L],c:["#1d2c5a","#3a5fb0","#9fc4ff"][L]}); }
@@ -443,6 +444,7 @@ cv.addEventListener("click",ev=>{ Sound.init(); Sound.resume(); const m=canvasPo
   else if(st==="start"||st==="quest"){ for(const r of uiRects){ if(inside(m,r)){ if(r.on)r.on(); break; } } }
 });
 function floatText(t){ floats.push({t,x:W/2,y:H/2-40,life:1.4}); }
+function toast(msg,col){ toastMsg=msg; toastCol=col||"#fff"; toastT=2.8; }   // prominent top banner
 
 /* ============================================================================
    START / RESET
@@ -454,7 +456,7 @@ function startGame(){
   player.weapons=[{id:ship.weapon,base:ship.weapon,level:1,timer:0,evo:false}]; player.passives={};
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];
-  planets=[];quest=null;questOffer=null;questCooldown=0; replenishPlanets();
+  planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0; replenishPlanets();
   gameTime=0;kills=0;bossKills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
@@ -471,32 +473,38 @@ function gameOver(){ state="gameover"; lastEarned=Math.floor(CONFIG.goldPerRun(g
 /* ============================================================================
    QUESTS + PLANETS
    ============================================================================ */
-const PLANET_NAMES=["Keplar","Vos","Hadley","Cindra","Orrus","Talca","Myrrh","Drex","Solis","Yano","Brae","Wexis"];
-const PLANET_COLS=["#8fb6ff","#ff9a6a","#7ce0a0","#d9a6ff","#ffd36a"];
+const PLANET_NAMES=["Keplar","Vos","Hadley","Cindra","Orrus","Talca","Myrrh","Drex","Solis","Yano","Brae","Wexis","Juno","Ophir","Zell","Carto"];
+const PLANET_COLS=["#8fb6ff","#ff9a6a","#7ce0a0","#d9a6ff","#ffd36a","#6ad9d9","#ff6a8f","#a0ff6a","#ffb347","#5a8cff","#c86aff","#46e8b0"];
+const planetName=()=>PLANET_NAMES[(Math.random()*PLANET_NAMES.length)|0];
+const planetCol =()=>PLANET_COLS[(Math.random()*PLANET_COLS.length)|0];
 function spawnPlanet(){ const a=rand(0,TAU),d=rand(1600,3000);
-  planets.push({x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:PLANET_NAMES[(Math.random()*PLANET_NAMES.length)|0],color:PLANET_COLS[(Math.random()*PLANET_COLS.length)|0]}); }
-function replenishPlanets(){ let g=0; while(planets.length<3&&g++<12) spawnPlanet(); }
+  planets.push({x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol()}); }
+function replenishPlanets(){ let g=0; while(planets.length<3&&g++<12) spawnPlanet(); }   // keep 3 persistent stations
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
-function consumePlanet(p){ const i=planets.indexOf(p); if(i>=0)planets.splice(i,1); replenishPlanets(); }
 function openQuestOffer(p){ const type=Math.random()<0.5?"cargo":"bounty",need=CONFIG.xpNeed(player.level);
-  questOffer={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?400:350}; state="quest"; Sound.pick(); }
+  questOffer={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?500:350}; state="quest"; Sound.pick(); }
 function spawnBountyTarget(){ spawnEnemy("elite"); const t=enemies[enemies.length-1];
-  if(t&&t.kind==="elite"){ t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
-function acceptQuest(){ const o=questOffer; questOffer=null; consumePlanet(o.planet);
-  if(o.type==="cargo"){ let dest=nearestPlanet(); if(!dest){ spawnPlanet(); dest=planets[planets.length-1]; }
-    quest={type:"cargo",dest,xp:o.xp,gold:o.gold}; floatText("CARGO ACCEPTED → "+dest.name); }
-  else { const t=spawnBountyTarget(); quest={type:"bounty",target:t,xp:o.xp,gold:o.gold}; floatText("BOUNTY MARKED — hunt the elite"); }
+  if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1400,2000); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
+    t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
+function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.planet;   // stay on the station; gate re-offers until you leave & return
+  if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9000,11000),                            // ~1 minute's flight at base speed
+      dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),beacon:true};
+    quest={type:"cargo",dest,xp:o.xp,gold:o.gold}; toast("CARGO ACCEPTED → "+dest.name,"#ffd400"); }
+  else { const t=spawnBountyTarget(); quest={type:"bounty",target:t,xp:o.xp,gold:o.gold}; toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
   state="playing"; }
-function declineQuest(){ consumePlanet(questOffer.planet); questOffer=null; questCooldown=2; state="playing"; }
+function declineQuest(){ questOnPlanet=questOffer.planet; questOffer=null; state="playing"; }   // leave & return to get a new offer
 function completeCargo(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
-  floatText("DELIVERED!  +"+quest.gold+"g"); particles.push(...burst(player.x,player.y,"#ffd400",30)); Sound.evolve();
-  quest=null; questCooldown=3; replenishPlanets(); }
+  toast("CARGO DELIVERED   +"+quest.gold+"g","#46e85a"); particles.push(...burst(player.x,player.y,"#ffd400",36)); fx.push({kind:"ring",x:player.x,y:player.y,r:90,life:0.4}); Sound.evolve();
+  quest=null; questCooldown=3; }
 function claimBounty(e){ if(quest&&quest.type==="bounty"&&quest.target===e){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
-  floatText("BOUNTY CLAIMED!  +"+quest.gold+"g"); quest=null; questCooldown=3; } }
+  toast("BOUNTY CLAIMED   +"+quest.gold+"g","#46e85a"); Sound.evolve(); quest=null; questCooldown=3; } }
 function questTick(dt){ if(questCooldown>0)questCooldown-=dt;
-  if(!quest){ if(questCooldown<=0) for(const p of planets){ const dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)){ openQuestOffer(p); break; } } }
-  else if(quest.type==="cargo"){ const p=quest.dest,dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)) completeCargo(); }
-  else if(quest.type==="bounty"){ if(!quest.target) quest=null; } }   // bounty payout happens on target death (claimBounty)
+  if(quest){ if(quest.type==="cargo"){ const p=quest.dest,dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+26)*(p.r+26)) completeCargo(); }
+    else if(quest.type==="bounty"&&!quest.target) quest=null; questOnPlanet=null; return; }
+  // no active quest: offer only on a FRESH entry into a station (must leave & return for a new one)
+  let cur=null; for(const p of planets){ const dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)){ cur=p; break; } }
+  if(cur&&cur!==questOnPlanet&&questCooldown<=0) openQuestOffer(cur);
+  questOnPlanet=cur; }
 
 /* ============================================================================
    UPDATE
@@ -507,6 +515,7 @@ function update(dt){
   if(particles.length>500) particles.splice(0,particles.length-500); particles=particles.filter(p=>p.life>0);
   for(const e of fx) e.life-=dt; fx=fx.filter(e=>e.life>0);
   if(shakeT>0){ shakeT-=dt; if(shakeEnabled){ const m=shakeT*18; sx=rand(-m,m); sy=rand(-m,m); } else sx=sy=0; } else sx=sy=0;
+  if(toastT>0) toastT-=dt;
   if(state!=="playing") return;
   gameTime+=dt;
 
@@ -581,8 +590,9 @@ function drawStars(){ const dx=player.x-prevX,dy=player.y-prevY; prevX=player.x;
 
 function drawWorld(){
   ctx.save(); ctx.translate(Math.round(W/2-player.x+sx),Math.round(H/2-player.y+sy));
-  // planets (persistent world destinations) — drawn first, behind the swarm
-  for(const p of planets){ ctx.save();
+  // planets (persistent stations + the active cargo-delivery beacon) — drawn first, behind the swarm
+  const drawn=quest&&quest.type==="cargo"?planets.concat([quest.dest]):planets;
+  for(const p of drawn){ ctx.save();
     ctx.shadowBlur=20; ctx.shadowColor=p.color; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.fill();
     ctx.shadowBlur=0; ctx.globalAlpha=0.4; ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,p.r+7,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
     ctx.fillStyle="#fff"; ctx.font="bold 12px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText(p.name,p.x,p.y-p.r-12); ctx.restore(); }
@@ -754,7 +764,7 @@ function drawShips(){
   const cardW=144,cardH=200,gap=12,total=SHIPS.length*cardW+(SHIPS.length-1)*gap,x0=(W-total)/2,y0=118;
   SHIPS.forEach((s,i)=>{ const x=x0+i*(cardW+gap),y=y0,r={x,y,w:cardW,h:cardH};
     r.on=()=>{ if(unlocked.includes(s.id)){ selectedShip=s.id; Store.set("vr_sel",selectedShip); }
-      else if(gold>=s.cost){ gold-=s.cost; unlocked.push(s.id); selectedShip=s.id; Store.set("vr_gold",gold); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Sound.level(); }
+      else if(gold>=s.cost){ gold-=s.cost; unlocked.push(s.id); selectedShip=s.id; Store.set("vr_gold",gold); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Sound.level(); toast("UNLOCKED "+s.name.toUpperCase(),s.color); }
       else floatText("NOT ENOUGH GOLD"); };
     uiRects.push(r);
     const owned=unlocked.includes(s.id),sel=selectedShip===s.id,afford=gold>=s.cost,hov=inside(mouse,r);
@@ -818,7 +828,7 @@ function drawUpgrades(){
   const cols=4,cw=200,ch=96,gx=12,gy=14,total=cols*cw+(cols-1)*gx,x0=(W-total)/2,y0=66,iw=(cw-20)/1;
   META.forEach((p,i)=>{ const col=i%cols,row=(i/cols)|0,x=x0+col*(cw+gx),y=y0+row*(ch+gy);
     const lv=M(p.id),maxed=lv>=p.max,cost=metaCost(p),afford=gold>=cost,r={x,y,w:cw,h:ch},hov=inside(mouse,r);
-    r.on=()=>{ if(maxed){ floatText("MAXED"); return; } if(gold>=cost){ gold-=cost; meta[p.id]=lv+1; Store.set("vr_gold",gold); Store.set("vr_meta",meta); Sound.pick(); } else floatText("NOT ENOUGH GOLD"); };
+    r.on=()=>{ if(maxed){ floatText("MAXED"); return; } if(gold>=cost){ gold-=cost; meta[p.id]=lv+1; Store.set("vr_gold",gold); Store.set("vr_meta",meta); Sound.pick(); toast(p.name+"  Lv "+(lv+1),"#54f0ff"); } else floatText("NOT ENOUGH GOLD"); };
     uiRects.push(r);
     ctx.fillStyle=hov?"rgba(20,30,60,0.95)":"rgba(10,16,36,0.92)"; ctx.fillRect(x,y,cw,ch);
     ctx.lineWidth=2; ctx.strokeStyle=maxed?"#46e85a":(afford?"#7a6a20":"#23283a"); ctx.strokeRect(x+1,y+1,cw-2,ch-2);
@@ -846,6 +856,8 @@ function render(){ ctx.clearRect(0,0,W,H); ctx.fillStyle="#04050d"; ctx.fillRect
   if(state!=="start"){ drawWorld(); drawHUD(); }
   ctx.textAlign="center"; ctx.font="bold 16px 'Courier New',monospace";
   for(const f of floats){ ctx.globalAlpha=clamp(f.life,0,1); ctx.fillStyle="#fff"; ctx.fillText(f.t,f.x,f.y); } ctx.globalAlpha=1;
+  if(toastT>0){ ctx.save(); ctx.globalAlpha=clamp(toastT/0.5,0,1); ctx.textAlign="center"; ctx.shadowBlur=14; ctx.shadowColor=toastCol;
+    ctx.fillStyle=toastCol; ctx.font="bold 22px 'Courier New',monospace"; ctx.fillText(toastMsg,W/2,72); ctx.restore(); }
   if(state==="start") drawStart();
   if(state==="levelup") drawLevelUp();
   if(state==="quest") drawQuest();
