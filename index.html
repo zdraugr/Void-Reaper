@@ -152,6 +152,7 @@ let runs = Store.get("vr_runs",[]);            // past-run history (most recent 
 let meta = Store.get("vr_meta",{});            // permanent gold-bought perks: id -> level
 if(!unlocked.includes(selectedShip)) selectedShip="vanguard";
 let menu="main";                                // start-screen sub-panel: main|ships|settings|runs|upgrades
+let pausePanel="root";                           // in-game pause menu: root | settings
 let bossKills=0, resetArm=0;                     // bosses slain this run; reset-progress confirm timer
 let shakeEnabled = Store.get("vr_shake",true);   // settings: camera shake on/off
 // settings that aren't "progress" persist even while DEV sandbox is on (bypass the Store DEV-guard)
@@ -167,6 +168,7 @@ let obstacles=[];                              // non-mineable hazard belts
 let rerolls=0, questsDone=0, rerollRect=null;  // level-up rerolls earned every 5 quests
 let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
+let padMoveX=0,padMoveY=0,padPrev={},padConnected=false,navIdx=0,prevState="";   // gamepad state + menu focus
 const stars=[]; let prevX=0, prevY=0;
 for(let i=0;i<170;i++){ const L=i%3; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.25,0.55,1.0][L],sz:[1,1,2][L],c:["#1d2c5a","#3a5fb0","#9fc4ff"][L]}); }
 
@@ -319,7 +321,7 @@ function separate(){ for(const e of enemies){ if(e.dead||e.asteroid||e.boss)cont
 
 // boss per-frame behavior: summon adds and/or fire radial bullet bursts (by boss number)
 function bossActions(dt){ for(const e of enemies){ if(!e.boss||e.dead)continue;
-  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=5; const c=1+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
+  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=3.5; const c=2+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
   if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=2;
     const m=8+2*bossCount,sp=160,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
     for(let i=0;i<m;i++){ const a=off+i/m*TAU; ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:7,dmg:bd,life:5}); }
@@ -412,7 +414,7 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
   if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyW","KeyA","KeyS","KeyD"].includes(e.code)) e.preventDefault();
   keys[e.code]=true;
   if(e.code==="KeyM"){ const m=Sound.toggle(); saveOpt("vr_mute",m); floatText(m?"MUTED":"SOUND ON"); }
-  if((e.code==="Escape"||e.code==="KeyP")&&(st==="playing"||st==="paused")) state=st==="playing"?"paused":"playing";
+  if(e.code==="Escape"||e.code==="KeyP"){ if(st==="playing"){ state="paused"; pausePanel="root"; } else if(st==="paused"){ if(pausePanel==="settings")pausePanel="root"; else state="playing"; } }
   if(e.code==="Escape"&&st==="start"&&menu!=="main"){ menu="main"; resetArm=0; }
   if(e.code==="Space"||e.code==="Enter"){ if(st==="start"&&menu==="main") startGame(); else if(st==="gameover"){ state="start"; menu="main"; } }
   if(st==="playing"&&e.code==="Space") tryBoost();
@@ -439,12 +441,34 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
 },{passive:false});
 addEventListener("keyup",e=>{ keys[e.code]=false; });
 document.addEventListener("visibilitychange",()=>{ if(document.hidden&&state==="playing") state="paused"; });
+/* ---- gamepad: left stick/d-pad move · A dash/confirm · B back/decline · Start pause · d-pad/stick + A navigate menus ---- */
+function pollGamepad(){ let gp=null; const pads=navigator.getGamepads?navigator.getGamepads():[];
+  for(const g of pads){ if(g){ gp=g; break; } }
+  padConnected=!!gp; padMoveX=0; padMoveY=0;
+  if(state!==prevState){ navIdx=0; prevState=state; }
+  if(!gp) return;
+  const Bt=gp.buttons,Ax=gp.axes,down=i=>Bt[i]&&Bt[i].pressed,hit=i=>{ const p=down(i),e=p&&!padPrev[i]; padPrev[i]=p; return e; };
+  if(Bt.some(b=>b.pressed)){ Sound.init(); Sound.resume(); }
+  let lx=Ax[0]||0,ly=Ax[1]||0; if(Math.abs(lx)<0.22)lx=0; if(Math.abs(ly)<0.22)ly=0;
+  if(down(14))lx=-1; if(down(15))lx=1; if(down(12))ly=-1; if(down(13))ly=1;
+  padMoveX=lx; padMoveY=ly;
+  const A=hit(0),B=hit(1),START=hit(9),up=hit(12),dn=hit(13),lf=hit(14),rt=hit(15);
+  // stick edges for menu nav (debounced via padPrev._nx/_ny)
+  let nUp=up,nDn=dn,nLf=lf,nRt=rt; const sy=Ax[1]||0,sx=Ax[0]||0;
+  if(sy<-0.5&&!padPrev._ny)nUp=true; if(sy>0.5&&!padPrev._ny)nDn=true; padPrev._ny=Math.abs(sy)>0.4;
+  if(sx<-0.5&&!padPrev._nx)nLf=true; if(sx>0.5&&!padPrev._nx)nRt=true; padPrev._nx=Math.abs(sx)>0.4;
+  if(state==="playing"){ if(A)tryBoost(); if(START){ state="paused"; pausePanel="root"; } }
+  else if(state==="levelup"){ const n=3+(rerolls>0?1:0); if(nLf)navIdx=(navIdx+n-1)%n; if(nRt)navIdx=(navIdx+1)%n; navIdx=((navIdx%n)+n)%n; if(A){ if(navIdx<3)choose(navIdx); else doReroll(); } }
+  else if(state==="quest"){ if(A)acceptQuest(); if(B)declineQuest(); }
+  else if(state==="paused"||state==="start"){ const n=uiRects.length; if(n){ if(nUp)navIdx=(navIdx+n-1)%n; if(nDn)navIdx=(navIdx+1)%n; navIdx=((navIdx%n)+n)%n; if(A&&uiRects[navIdx]&&uiRects[navIdx].on)uiRects[navIdx].on(); }
+    if(B){ if(state==="paused"){ if(pausePanel==="settings")pausePanel="root"; else state="playing"; } else if(state==="start"&&menu!=="main")menu="main"; } }
+  else if(state==="gameover"){ if(A){ state="start"; menu="main"; } } }
 function canvasPos(ev){ const r=cv.getBoundingClientRect(); return {x:(ev.clientX-r.left)*(W/r.width),y:(ev.clientY-r.top)*(H/r.height)}; }
 cv.addEventListener("mousemove",ev=>{ mouse=canvasPos(ev); });
 cv.addEventListener("click",ev=>{ Sound.init(); Sound.resume(); const m=canvasPos(ev),st=state; mouse=m;
   if(st==="levelup"){ if(rerollRect&&inside(m,rerollRect)) doReroll(); else levelChoices.forEach((c,i)=>{ if(inside(m,c.rect)) choose(i); }); }
   else if(st==="gameover"){ state="start"; menu="main"; }
-  else if(st==="start"||st==="quest"){ for(const r of uiRects){ if(inside(m,r)){ if(r.on)r.on(); break; } } }
+  else if(st==="start"||st==="quest"||st==="paused"){ for(const r of uiRects){ if(inside(m,r)){ if(r.on)r.on(); break; } } }
 });
 function floatText(t){ floats.push({t,x:W/2,y:H/2-40,life:1.4}); }
 function toast(msg,col){ toastMsg=msg; toastCol=col||"#fff"; toastT=2.8; }   // prominent top banner
@@ -538,6 +562,7 @@ function update(dt){
   else { let mx=0,my=0;
     if(keys["ArrowLeft"]||keys["KeyA"])mx-=1; if(keys["ArrowRight"]||keys["KeyD"])mx+=1;
     if(keys["ArrowUp"]||keys["KeyW"])my-=1; if(keys["ArrowDown"]||keys["KeyS"])my+=1;
+    mx+=padMoveX; my+=padMoveY;   // gamepad left stick / d-pad
     if(mx||my){ const l=Math.hypot(mx,my); mx/=l; my/=l; player.facing=Math.atan2(my,mx); }
     else { const t=nearest(player.x,player.y,9999); if(t)player.facing=Math.atan2(t.y-player.y,t.x-player.x); }
     const spd=moveSpeed(); player.x+=mx*spd*dt; player.y+=my*spd*dt; }
@@ -555,6 +580,8 @@ function update(dt){
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt;
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty){ e.dead=true; continue; }
     if(!e.asteroid){ e.x+=dx/d*e.sp*dt; e.y+=dy/d*e.sp*dt; }
+    if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
+      if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=3.2; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
       ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*240,vy:Math.sin(a)*240,r:6,dmg:Math.round(6+Math.min(gameTime,300)*0.03),life:3.5}); } }
     if(e.kind==="bomber"&&d<40){ e.dead=true;                                   // kamikaze: detonate on contact
@@ -810,8 +837,7 @@ function drawShips(){
   backBtn();
 }
 
-function drawSettings(){
-  center([{t:"SETTINGS",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
+function settingsControls(backFn,allowReset){   // shared by the start-menu Settings panel and the in-game pause menu
   const rowW=420,x=(W-rowW)/2; let y=132;
   ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("MASTER VOLUME",x,y-8);
   const tx=x,ty=y+4,tw=rowW,th=14; bar(tx,ty,tw,th,Sound.getVol(),"#54f0ff","#0a1430");
@@ -820,15 +846,27 @@ function drawSettings(){
   y+=56;
   toggleRow("SOUND",!Sound.isMuted(),x,y,rowW,()=>{ const m=Sound.toggle(); saveOpt("vr_mute",m); }); y+=48;
   toggleRow("SCREEN SHAKE",shakeEnabled,x,y,rowW,()=>{ shakeEnabled=!shakeEnabled; saveOpt("vr_shake",shakeEnabled); }); y+=48;
-  const armed=resetArm>now;
-  panelBtn(armed?"CLICK AGAIN TO CONFIRM":"RESET PROGRESS",x,y,rowW,38,()=>{
-    if(armed){ gold=0; unlocked=["vanguard"]; selectedShip="vanguard"; bestTime=0; runs=[];
-      Store.set("vr_gold",0); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Store.set("vr_best",0); Store.set("vr_runs",[]);
-      resetArm=0; floatText("PROGRESS RESET"); }
-    else resetArm=now+2500; },{color:armed?"#ff3b3b":"#7a3a3a",text:armed?"#ff7a7a":"#cc9"});
-  y+=54;
-  center([{t:"WASD/arrows move · SPACE dash · 1/2/3 pick · ESC pause · M mute",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y);
-  backBtn();
+  if(allowReset){ const armed=resetArm>now;
+    panelBtn(armed?"CLICK AGAIN TO CONFIRM":"RESET PROGRESS",x,y,rowW,38,()=>{
+      if(armed){ gold=0; unlocked=["vanguard"]; selectedShip="vanguard"; bestTime=0; runs=[];
+        Store.set("vr_gold",0); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Store.set("vr_best",0); Store.set("vr_runs",[]);
+        resetArm=0; floatText("PROGRESS RESET"); }
+      else resetArm=now+2500; },{color:armed?"#ff3b3b":"#7a3a3a",text:armed?"#ff7a7a":"#cc9"}); y+=54; }
+  center([{t:"move WASD/arrows/stick · dash SPACE/A · pick 1/2/3 · pause ESC/Start · mute M",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y);
+  panelBtn("‹ BACK",24,H-52,120,32,backFn,{font:"bold 14px 'Courier New',monospace"});
+}
+function drawSettings(){ center([{t:"SETTINGS",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
+  settingsControls(()=>{ menu="main"; resetArm=0; },true); }
+function quitToMenu(){ gameOver(); state="start"; menu="main"; pausePanel="root"; }   // banks this run's gold/record, then exits
+function drawPause(){ uiRects=[]; ctx.fillStyle="rgba(4,5,13,0.74)"; ctx.fillRect(0,0,W,H);
+  if(pausePanel==="settings"){ center([{t:"SETTINGS",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
+    settingsControls(()=>{ pausePanel="root"; resetArm=0; },false); return; }
+  center([{t:"PAUSED",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],H/2-150);
+  const bw=300,bh=46,x=(W-bw)/2; let y=H/2-80;
+  panelBtn("RESUME",x,y,bw,bh,()=>{ state="playing"; },{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"}); y+=bh+14;
+  panelBtn("SETTINGS",x,y,bw,bh,()=>{ pausePanel="settings"; },{font:"bold 17px 'Courier New',monospace"}); y+=bh+14;
+  panelBtn("QUIT TO MENU",x,y,bw,bh,()=>quitToMenu(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 17px 'Courier New',monospace"});
+  center([{t:"ESC resumes · quitting banks this run's gold",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y+bh+26);
 }
 
 function drawRuns(){
@@ -890,13 +928,18 @@ function render(){ ctx.clearRect(0,0,W,H); ctx.fillStyle="#04050d"; ctx.fillRect
   if(state==="start") drawStart();
   if(state==="levelup") drawLevelUp();
   if(state==="quest") drawQuest();
-  if(state==="paused"){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H); center([{t:"PAUSED",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:40,g:true},{t:"press ESC to resume",c:"#3a5fb0",f:"16px 'Courier New',monospace",lh:40}],H/2-10); }
+  if(state==="paused") drawPause();
   if(state==="gameover") drawGameOver();
   if(DEV){ ctx.save(); ctx.textAlign="center"; ctx.font="9px 'Courier New',monospace"; ctx.fillStyle=devGod?"#46e85a":"#7a6a20";
     ctx.fillText("DEV(`)  L lvl · B boss · H heal · V god · X kill · T +60s · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
+  // gamepad focus highlight
+  if(padConnected){ let hr=null;
+    if((state==="start"||state==="paused")&&uiRects[navIdx]) hr=uiRects[navIdx];
+    else if(state==="levelup"){ const n=3+(rerolls>0?1:0),idx=((navIdx%n)+n)%n; hr=idx<3?(levelChoices[idx]&&levelChoices[idx].rect):rerollRect; }
+    if(hr){ ctx.save(); ctx.strokeStyle="#fff"; ctx.lineWidth=3; ctx.shadowBlur=8; ctx.shadowColor="#fff"; ctx.strokeRect(hr.x-3,hr.y-3,hr.w+6,hr.h+6); ctx.restore(); } }
 }
 
-function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; update(dt); render(); requestAnimationFrame(loop); }
+function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; pollGamepad(); update(dt); render(); requestAnimationFrame(loop); }
 requestAnimationFrame(ts=>{ last=ts; loop(ts); });
 </script>
 </body>
