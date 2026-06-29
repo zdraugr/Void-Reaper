@@ -60,7 +60,8 @@ const CONFIG = {
 const Store = (()=>{ const mem={};
   return {
     get(k,def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return (k in mem)?mem[k]:def; } },
-    set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ mem[k]=v; } }
+    set(k,v){ if(DEV) return;  // DEV is an ephemeral sandbox: never write to the real save while cheats are on
+      try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ mem[k]=v; } }
   };
 })();
 
@@ -93,6 +94,8 @@ function bake(grid,scale,whiteOnly,remap){
 function cacheSprite(n,g,s){ CACHE[n]={c:bake(g,s,false),cw:bake(g,s,true),w:g[0].length*s,h:g.length*s}; }
 ["player","mite","bee","moth","boss","asteroid"].forEach(n=>cacheSprite(n,SPR[n],4));
 cacheSprite("elite",SPR.boss,8);
+// spitter: recolored moth (cyan) — a ranged enemy; no new pixel grid needed
+CACHE.spitter={c:bake(SPR.moth,4,false,{"2":"#54f0ff","8":"#bff6ff"}),cw:bake(SPR.moth,4,true),w:SPR.moth[0].length*4,h:SPR.moth.length*4};
 // real boss: the boss grid baked big and recolored menacing-red
 const _mb={"7":"#ff3b3b","8":"#7a0000","3":"#ff9a00","6":"#ffd400"};
 CACHE.megaboss={c:bake(SPR.boss,10,false,_mb),cw:bake(SPR.boss,10,true),w:SPR.boss[0].length*10,h:SPR.boss.length*10};
@@ -136,6 +139,7 @@ const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false; const thr={};
    ============================================================================ */
 let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
+let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -247,13 +251,14 @@ function fireWeapons(dt){
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
 const TYPES={ mite:{spr:"mite",hp:2,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:4,sp:80,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:9,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:26,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true} };
+  moth:{spr:"moth",hp:9,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:26,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
+  spitter:{spr:"spitter",hp:10,sp:64,val:4,dmg:7,r:14} };
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
-  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false}); }
+  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
   const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(35+Math.min(gameTime,360)*0.18);
   enemies.push({asteroid:true,spr:"asteroid",x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:0,val:0,dmg:0,r:20,big:false,flash:0,dead:false}); }
-function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0]];
+function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0],["spitter",t>45?Math.min(10,(t-45)*0.06):0]];
   let sum=0; for(const w of wts)sum+=w[1]; let r=Math.random()*sum; for(const w of wts){ r-=w[1]; if(r<=0)return w[0]; } return "bee"; }
 // real boss: wipes the swarm (no drops), then arrives. Escalates by boss number n:
 //   n1 = bruiser + adds · n2 = bruiser + bullet patterns · n3+ = both, each tougher.
@@ -277,7 +282,7 @@ function separate(){ for(const e of enemies){ if(e.dead||e.asteroid||e.boss)cont
 
 // boss per-frame behavior: summon adds and/or fire radial bullet bursts (by boss number)
 function bossActions(dt){ for(const e of enemies){ if(!e.boss||e.dead)continue;
-  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=4; const c=2+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
+  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=5; const c=1+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
   if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=2;
     const m=8+2*bossCount,sp=160,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
     for(let i=0;i<m;i++){ const a=off+i/m*TAU; ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:7,dmg:bd,life:5}); }
@@ -365,10 +370,28 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
   if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyW","KeyA","KeyS","KeyD"].includes(e.code)) e.preventDefault();
   keys[e.code]=true;
   if(e.code==="KeyM"){ const m=Sound.toggle(); floatText(m?"MUTED":"SOUND ON"); }
-  if(e.code==="KeyP"&&(st==="playing"||st==="paused")) state=st==="playing"?"paused":"playing";
+  if((e.code==="Escape"||e.code==="KeyP")&&(st==="playing"||st==="paused")) state=st==="playing"?"paused":"playing";
   if(e.code==="Space"||e.code==="Enter"){ if(st==="start") startGame(); else if(st==="gameover") state="start"; }
   if(st==="playing"&&e.code==="Space") tryBoost();
   if(st==="levelup"){ if(e.code==="Digit1")choose(0); if(e.code==="Digit2")choose(1); if(e.code==="Digit3")choose(2); }
+  // --- developer/testing hotkeys (gated by DEV; set DEV=false to disable) ---
+  if(e.code==="Backquote"&&!e.repeat){ DEV=!DEV;
+    if(DEV){ floatText("DEV ON"); }
+    else { devGod=false;  // leaving the sandbox: drop all cheats and reload the real, naturally-earned save
+      gold=Store.get("vr_gold",0); unlocked=Store.get("vr_ships",["vanguard"]); selectedShip=Store.get("vr_sel","vanguard"); bestTime=Store.get("vr_best",0);
+      if(!unlocked.includes(selectedShip)) selectedShip="vanguard"; floatText("DEV OFF — save restored"); } }
+  if(DEV&&!e.repeat){
+    if(e.code==="KeyG"){ gold+=1000; Store.set("vr_gold",gold); floatText("+1000 GOLD"); }
+    if(e.code==="KeyU"){ unlocked=SHIPS.map(s=>s.id); Store.set("vr_ships",unlocked); floatText("ALL SHIPS UNLOCKED"); }
+    if(st==="playing"){
+      if(e.code==="KeyL") gainXP(CONFIG.xpNeed(player.level)-player.xp);   // grant exactly one level
+      if(e.code==="KeyB") spawnBoss();
+      if(e.code==="KeyH"){ player.hp=maxHP(); floatText("HEALED"); }
+      if(e.code==="KeyV"){ devGod=!devGod; floatText(devGod?"GOD ON":"GOD OFF"); }
+      if(e.code==="KeyT"){ gameTime+=60; floatText("+60s"); }
+      if(e.code==="KeyX"){ for(const en of enemies){ if(!en.asteroid&&!en.dead) hurtEnemy(en,1e9); } floatText("KILL ALL"); }
+    }
+  }
 },{passive:false});
 addEventListener("keyup",e=>{ keys[e.code]=false; });
 document.addEventListener("visibilitychange",()=>{ if(document.hidden&&state==="playing") state="paused"; });
@@ -422,8 +445,9 @@ function update(dt){
   player.orbit+=dt*2.2; player.hp=Math.min(maxHP(),player.hp+regen()*dt);
 
   // spawning
-  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); const b=CONFIG.spawnBatch(gameTime); for(let i=0;i<b;i++)spawnEnemy(pickKind()); }
-  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnEnemy("elite"); shakeT=0.25; }
+  const bossAlive=enemies.some(e=>e.boss);  // during a boss fight the encounter is just the boss + its own adds
+  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!bossAlive){ const b=CONFIG.spawnBatch(gameTime); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }
+  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!bossAlive){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnEnemy("elite"); shakeT=0.25; }
   asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=rand(16,24); spawnAsteroid(); }
   bossTimer-=dt; if(bossTimer<=0){ if(enemies.some(e=>e.boss)) bossTimer=20; else spawnBoss(); }
 
@@ -431,7 +455,9 @@ function update(dt){
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt;
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss){ e.dead=true; continue; }
-    if(!e.asteroid){ e.x+=dx/d*e.sp*dt; e.y+=dy/d*e.sp*dt; } }
+    if(!e.asteroid){ e.x+=dx/d*e.sp*dt; e.y+=dy/d*e.sp*dt; }
+    if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=2.5; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
+      ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*240,vy:Math.sin(a)*240,r:6,dmg:Math.round(6+Math.min(gameTime,300)*0.03),life:4}); } } }
   buildGrid(); separate(); fireWeapons(dt); bossActions(dt); stepEnemyBullets(dt);
 
   // projectiles
@@ -445,11 +471,11 @@ function update(dt){
         hurtEnemy(e,s.dmg); if(s.pierce>0)s.pierce--; else { s.life=0; break; } } } }
   shots=shots.filter(s=>s.life>0&&Math.abs(s.x-player.x)<1200&&Math.abs(s.y-player.y)<1200);
 
-  // contact damage (asteroids don't hurt you)
-  if(now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+10;
+  // contact damage (asteroids don't hurt you; devGod ignores all damage)
+  if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+10;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=e.dmg; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0){ player.hp=0; gameOver(); } break; } } }
-  // boss bullets vs player (same i-frames as contact damage)
-  if(now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+10;
+  // enemy bullets (boss + spitters) vs player (same i-frames as contact damage)
+  if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+10;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=b.dmg; b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0){ player.hp=0; gameOver(); } break; } } }
 
   // gems (magnet, pickup, vacuum)
@@ -617,8 +643,10 @@ function render(){ ctx.clearRect(0,0,W,H); ctx.fillStyle="#04050d"; ctx.fillRect
   for(const f of floats){ ctx.globalAlpha=clamp(f.life,0,1); ctx.fillStyle="#fff"; ctx.fillText(f.t,f.x,f.y); } ctx.globalAlpha=1;
   if(state==="start") drawStart();
   if(state==="levelup") drawLevelUp();
-  if(state==="paused"){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H); center([{t:"PAUSED",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:40,g:true},{t:"press P to resume",c:"#3a5fb0",f:"16px 'Courier New',monospace",lh:40}],H/2-10); }
+  if(state==="paused"){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H); center([{t:"PAUSED",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:40,g:true},{t:"press ESC to resume",c:"#3a5fb0",f:"16px 'Courier New',monospace",lh:40}],H/2-10); }
   if(state==="gameover") drawGameOver();
+  if(DEV){ ctx.save(); ctx.textAlign="center"; ctx.font="9px 'Courier New',monospace"; ctx.fillStyle=devGod?"#46e85a":"#7a6a20";
+    ctx.fillText("DEV(`)  L lvl · B boss · H heal · V god · X kill · T +60s · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
 }
 
 function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; update(dt); render(); requestAnimationFrame(loop); }
