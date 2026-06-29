@@ -193,16 +193,12 @@ const getWeapon=base=>player.weapons.find(w=>w.base===base);
 /* ============================================================================
    WEAPONS
    ============================================================================ */
-// targeting prefers live enemies; asteroids are only chosen as a fallback (no enemy in range)
-function nearest(x,y,maxR){ const lim=maxR?maxR*maxR:Infinity; let best=null,bd=lim,rock=null,rd=lim;
-  for(const e of enemies){ if(e.dead)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy;
-    if(e.asteroid){ if(d<rd){rd=d;rock=e;} } else if(d<bd){bd=d;best=e;} }
-  return best||rock; }
-function kNearest(x,y,k,maxR){ const en=[],ro=[],r2=maxR*maxR;
-  for(const e of enemies){ if(e.dead)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy; if(d<r2)(e.asteroid?ro:en).push([d,e]); }
-  en.sort((a,b)=>a[0]-b[0]); const out=en.slice(0,k).map(p=>p[1]);
-  if(out.length<k){ ro.sort((a,b)=>a[0]-b[0]); for(const p of ro){ if(out.length>=k)break; out.push(p[1]); } }
-  return out; }
+// targeting treats asteroids like enemies — closest wins (so weapons break rocks too)
+function nearest(x,y,maxR){ let best=null,bd=maxR?maxR*maxR:Infinity;
+  for(const e of enemies){ if(e.dead)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=e;} } return best; }
+function kNearest(x,y,k,maxR){ const list=[],r2=maxR*maxR;
+  for(const e of enemies){ if(e.dead)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy; if(d<r2)list.push([d,e]); }
+  list.sort((a,b)=>a[0]-b[0]); return list.slice(0,k).map(p=>p[1]); }
 function spawnShot(o){ if(shots.length<500) shots.push(o); }
 function droneParams(){ const w=getWeapon("drones"); if(!w)return null;
   if(w.evo)return {count:8,R:112,r:16,dmg:24*dmgMult(),tick:0.12};
@@ -252,7 +248,7 @@ const TYPES={ mite:{spr:"mite",hp:2,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:4
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
-  const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(40+gameTime*0.6);
+  const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(35+Math.min(gameTime,360)*0.18);
   enemies.push({asteroid:true,spr:"asteroid",x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:0,val:0,dmg:0,r:20,big:false,flash:0,dead:false}); }
 function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0]];
   let sum=0; for(const w of wts)sum+=w[1]; let r=Math.random()*sum; for(const w of wts){ r-=w[1]; if(r<=0)return w[0]; } return "bee"; }
