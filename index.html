@@ -7,23 +7,23 @@
 <style>
   html,body{
     margin:0;height:100%;
-    background:radial-gradient(circle at 50% 35%, #0a1030 0%, #04050d 60%, #010108 100%);
+    background:radial-gradient(circle at 50% 28%, #29114f 0%, #140a33 45%, #07041a 100%);
     overflow:hidden;display:flex;align-items:center;justify-content:center;
-    font-family:"Courier New",ui-monospace,monospace;color:#54f0ff;
+    font-family:"Courier New",ui-monospace,monospace;color:#2de2e6;
     -webkit-tap-highlight-color:transparent;
   }
   #wrap{position:relative;}
   canvas{
     display:block;aspect-ratio:8/5;height:96vh;width:auto;max-width:99vw;max-height:96vh;
-    image-rendering:pixelated;background:#04050d;border:1px solid #16306b;border-radius:6px;
-    box-shadow:0 0 44px #0b2a6b55, inset 0 0 70px #00081a;cursor:crosshair;
+    image-rendering:pixelated;background:#0a0620;border:1px solid #6a2ea0;border-radius:6px;
+    box-shadow:0 0 60px #b14aed55, 0 0 24px #2de2e633, inset 0 0 80px #0a041e;cursor:crosshair;
   }
   #crt{position:absolute;inset:0;border-radius:6px;pointer-events:none;
     background:
-      repeating-linear-gradient(0deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.14) 3px, rgba(0,0,0,0) 4px),
-      radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(0,0,0,0.5) 100%);
+      repeating-linear-gradient(0deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 1px, rgba(0,0,0,0.22) 2px, rgba(0,0,0,0) 3px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(12,4,34,0.62) 100%);
     mix-blend-mode:multiply;}
-  #hint{position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:12px;letter-spacing:2px;color:#3b5aa0;}
+  #hint{position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:12px;letter-spacing:2px;color:#7b4fd0;}
   @media (max-width:560px){#hint{display:none;}}
 </style>
 </head>
@@ -74,13 +74,14 @@ function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.rand
 function inside(p,r){ return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h; }
 
 /* ---------------- pixel sprites ---------------- */
-const PAL = {1:"#54f0ff",2:"#ff3b3b",3:"#ffd400",4:"#ff9a00",5:"#ffffff",6:"#ff5ff0",7:"#46e85a",8:"#4488ff",9:"#7c8499",0:"#3c4252"};
+// synthwave palette: cyan hull, hot-magenta + purple foes, amber/white highlights
+const PAL = {1:"#2de2e6",2:"#ff2e97",3:"#ffd23f",4:"#ff8a3d",5:"#ffffff",6:"#ff6ad5",7:"#b14aed",8:"#5a7dff",9:"#8a7bb8",0:"#2a2350"};
 const SPR = {
-  player:[ ".....5.....",".....1.....","....111....","...11211...","..1112111..",".111111111.","11111111111","1..11.11..1","....2.2...." ],
-  mite:[ ".6...6.","..666..",".66666.","6656566",".66666.","6.6.6.6" ],
-  bee:[ "..8.....8..","...8...8...",".333333333.","33533333533","33333333333","8.3333333.8","8..33333..8","....3.3...." ],
+  player:[ ".....5.....","....111....","....121....","...11111...","..1111111..",".111121111.","11111111111","11.11111.11","1...1.1...1" ],
+  mite:[ "...2...","..272..",".27572.","2275722",".27572.","..272..","...2..." ],
+  bee:[ "...333...","..33333..",".3353533.","333333333",".3333333.","..33333..","...333..." ],
   moth:[ "2.2.....2.2",".828...828.","8.822.228.8",".8252.2528.","8.8222222.8",".8.22222.8.","8...2.2...8","....2.2...." ],
-  boss:[ "..6.......6..","...6.....6...",".77777777777.","7775777775777","7777777777777","8777777777778","8877777777788","8..7777777..8","...6.7.7.6...","..3.......3.." ],
+  boss:[ "..7.......7..","...7.....7...",".66666666666.","6667666676666","6666656666666","7666666666667","7766666666677","7..6666666..7","...7.6.6.7...","..2.......2.." ],
   asteroid:[ "...99990...","..9999990..",".999959990.","99999999900","99999999990","09999999990","09999999900",".099999900..","..0999900..","...00000..." ]
 };
 const CACHE={}, shipCanvas={};
@@ -99,7 +100,7 @@ CACHE.spitter={c:bake(SPR.moth,4,false,{"2":"#54f0ff","8":"#bff6ff"}),cw:bake(SP
 // bomber: orange recolor of the mite — a fast kamikaze that detonates on contact
 CACHE.bomber={c:bake(SPR.mite,4,false,{"6":"#ff9a00"}),cw:bake(SPR.mite,4,true),w:SPR.mite[0].length*4,h:SPR.mite.length*4};
 // real boss: the boss grid baked big and recolored menacing-red
-const _mb={"7":"#ff3b3b","8":"#7a0000","3":"#ff9a00","6":"#ffd400"};
+const _mb={"6":"#ff2e97","7":"#ff2e97","8":"#6a1248","5":"#ffffff","2":"#ffd23f"};   // synthwave megaboss: hot-magenta hull
 CACHE.megaboss={c:bake(SPR.boss,10,false,_mb),cw:bake(SPR.boss,10,true),w:SPR.boss[0].length*10,h:SPR.boss.length*10};
 function blit(n,x,y,white){ const s=CACHE[n]; ctx.drawImage(white?s.cw:s.c,Math.round(x-s.w/2),Math.round(y-s.h/2)); }
 
@@ -170,7 +171,8 @@ let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / 
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
 let padMoveX=0,padMoveY=0,padPrev={},padConnected=false,navIdx=0,prevState="";   // gamepad state + menu focus
 const stars=[]; let prevX=0, prevY=0;
-for(let i=0;i<170;i++){ const L=i%3; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.25,0.55,1.0][L],sz:[1,1,2][L],c:["#1d2c5a","#3a5fb0","#9fc4ff"][L]}); }
+for(let i=0;i<200;i++){ const L=i%4; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.22,0.45,0.8,1.0][L],sz:[1,1,1,2][L],c:["#3a2a6a","#6a4fb0","#2de2e6","#ff6ad5"][L],tw:rand(0,TAU)}); }
+const nebulae=[]; for(let i=0;i<5;i++) nebulae.push({x:rand(0,W),y:rand(0,H),r:rand(180,360),c:["#ff2e97","#2de2e6","#b14aed","#ff6ad5","#5a7dff"][i],f:rand(0.05,0.13)});
 
 /* ---------------- stat getters ---------------- */
 const P=id=>player.passives[id]||0;
@@ -629,8 +631,22 @@ function update(dt){
    RENDER
    ============================================================================ */
 function fmtTime(s){ const m=Math.floor(s/60),sec=Math.floor(s%60); return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); }
-function drawStars(){ const dx=player.x-prevX,dy=player.y-prevY; prevX=player.x; prevY=player.y;
-  for(const st of stars){ st.x-=dx*st.f; st.y-=dy*st.f; if(st.x<0)st.x+=W; if(st.x>W)st.x-=W; if(st.y<0)st.y+=H; if(st.y>H)st.y-=H; ctx.fillStyle=st.c; ctx.fillRect(st.x|0,st.y|0,st.sz,st.sz); } }
+function drawBackdrop(){ const dx=player.x-prevX,dy=player.y-prevY; prevX=player.x; prevY=player.y;
+  const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,"#160b38"); g.addColorStop(0.5,"#0c0726"); g.addColorStop(1,"#08041c"); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // nebula clouds — slow parallax, additive glow
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  for(const n of nebulae){ n.x-=dx*n.f; n.y-=dy*n.f;
+    if(n.x<-n.r)n.x+=W+n.r*2; if(n.x>W+n.r)n.x-=W+n.r*2; if(n.y<-n.r)n.y+=H+n.r*2; if(n.y>H+n.r)n.y-=H+n.r*2;
+    const rg=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,n.r); rg.addColorStop(0,n.c+"30"); rg.addColorStop(1,n.c+"00"); ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,TAU); ctx.fill(); }
+  ctx.restore();
+  // parallax neon grid — world-space, scrolls as you fly (outrun vibe)
+  const sp=110,ox=((-player.x*0.5)%sp+sp)%sp,oy=((-player.y*0.5)%sp+sp)%sp;
+  ctx.save(); ctx.globalAlpha=0.09; ctx.strokeStyle="#7b3ff0"; ctx.lineWidth=1; ctx.beginPath();
+  for(let x=ox;x<=W;x+=sp){ ctx.moveTo(x|0,0); ctx.lineTo(x|0,H); } for(let y=oy;y<=H;y+=sp){ ctx.moveTo(0,y|0); ctx.lineTo(W,y|0); } ctx.stroke(); ctx.restore();
+  // starfield — parallax + twinkle
+  for(const st of stars){ st.x-=dx*st.f; st.y-=dy*st.f; if(st.x<0)st.x+=W; if(st.x>W)st.x-=W; if(st.y<0)st.y+=H; if(st.y>H)st.y-=H;
+    ctx.globalAlpha=0.55+0.45*Math.sin(now/360+st.tw); ctx.fillStyle=st.c; ctx.fillRect(st.x|0,st.y|0,st.sz,st.sz); }
+  ctx.globalAlpha=1; }
 
 function drawWorld(){
   ctx.save(); ctx.translate(Math.round(W/2-player.x+sx),Math.round(H/2-player.y+sy));
@@ -919,7 +935,7 @@ function drawGameOver(){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H)
     {t:(gameTime>=bestTime?"NEW BEST TIME!":"BEST  "+fmtTime(bestTime)),c:"#ff5ff0",f:"16px 'Courier New',monospace",lh:46}],H/2-100);
   if(Math.floor(now/500)%2===0) center([{t:"PRESS SPACE / CLICK FOR HANGAR",c:"#54f0ff",f:"bold 18px 'Courier New',monospace",lh:0,g:true}],H/2+96); }
 
-function render(){ ctx.clearRect(0,0,W,H); ctx.fillStyle="#04050d"; ctx.fillRect(0,0,W,H); drawStars();
+function render(){ ctx.clearRect(0,0,W,H); drawBackdrop();
   if(state!=="start"){ drawWorld(); drawHUD(); }
   ctx.textAlign="center"; ctx.font="bold 16px 'Courier New',monospace";
   for(const f of floats){ ctx.globalAlpha=clamp(f.life,0,1); ctx.fillStyle="#fff"; ctx.fillText(f.t,f.x,f.y); } ctx.globalAlpha=1;
