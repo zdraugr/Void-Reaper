@@ -125,10 +125,13 @@ const SHIP_SPR={
 for(const s of SHIPS){ const c=bake(SHIP_SPR[s.id]||SPR.player,4,false,{"1":s.color}); shipCanvas[s.id]={c,w:c.width,h:c.height}; }
 
 /* ---------------- sound ---------------- */
-const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,bgm=null; const thr={};
+const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,bgm=null; const thr={},sfxBuf={};
   function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=musicVol; bgm.muted=muted; bgm.play().catch(()=>{}); }
+  function loadSfx(){ for(const n of ["destroy","destroyboss","levelup","takedamage"])   // decode mp3 SFX into buffers, routed through master
+    fetch("sfx/"+n+".mp3").then(r=>r.arrayBuffer()).then(b=>ac.decodeAudioData(b)).then(buf=>{ sfxBuf[n]=buf; }).catch(()=>{}); }
+  function playBuf(n,v){ if(!ac||muted||!sfxBuf[n])return false; const s=ac.createBufferSource(); s.buffer=sfxBuf[n]; const g=ac.createGain(); g.gain.value=v==null?0.8:v; s.connect(g); g.connect(master); s.start(); return true; }
   function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=vol; master.connect(ac.destination);
-    const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; startMusic(); }
+    const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; startMusic(); loadSfx(); }
   function resume(){ if(ac&&ac.state==="suspended")ac.resume(); if(bgm&&bgm.paused&&!muted)bgm.play().catch(()=>{}); } const t=()=>ac.currentTime;
   function tone(f,d,ty,v,sl){ if(!ac||muted)return; const o=ac.createOscillator(),g=ac.createGain(); o.type=ty; o.frequency.setValueAtTime(f,t()); if(sl)o.frequency.exponentialRampToValueAtTime(sl,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); o.connect(g); g.connect(master); o.start(); o.stop(t()+d); }
   function noise(d,v,cut){ if(!ac||muted)return; const s=ac.createBufferSource(); s.buffer=nbuf; const g=ac.createGain(),f=ac.createBiquadFilter(); f.type="lowpass"; f.frequency.setValueAtTime(cut,t()); f.frequency.exponentialRampToValueAtTime(120,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(t()+d); }
@@ -138,14 +141,15 @@ const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicV
     setMusicVol(v){ musicVol=clamp(v,0,1); if(bgm)bgm.volume=musicVol; }, getMusicVol(){ return musicVol; },
     setMuted(m){ muted=!!m; if(bgm)bgm.muted=muted; }, isMuted(){ return muted; },
     shoot(){ if(gate("s",55))tone(880,.07,"square",.10,300); },
-    pop(){ if(gate("p",45))noise(.08,.18,1600); },
+    pop(){ if(gate("p",45)){ if(!playBuf("destroy",0.65))noise(.08,.18,1600); } },   // enemy destroyed
     pick(){ if(gate("g",40))tone(1200,.05,"square",.06,1700); },
     zap(){ tone(300,.12,"sawtooth",.12,1400); noise(.10,.15,3000); },
     missile(){ noise(.18,.16,1200); tone(140,.2,"sawtooth",.08,40); },
     boost(){ tone(260,.2,"sawtooth",.13,820); noise(.16,.12,2400); },
     crack(){ noise(.22,.3,1400); tone(120,.25,"square",.1,50); },
-    hurt(){ if(gate("h",120)){ noise(.18,.3,900); tone(180,.18,"square",.12,70);} },
-    level(){ tone(523,.12,"square",.16,660); setTimeout(()=>tone(784,.16,"square",.16,1046),110); },
+    hurt(){ if(gate("h",120)){ if(!playBuf("takedamage",0.9)){ noise(.18,.3,900); tone(180,.18,"square",.12,70);} } },
+    level(){ if(!playBuf("levelup",0.9)){ tone(523,.12,"square",.16,660); setTimeout(()=>tone(784,.16,"square",.16,1046),110);} },
+    bossDie(){ if(!playBuf("destroyboss",0.95)){ tone(440,.1,"square",.18,880); setTimeout(()=>tone(880,.18,"square",.18,1760),190); noise(.22,.3,1400);} },
     evolve(){ tone(440,.1,"square",.18,880); setTimeout(()=>tone(660,.1,"square",.18,1320),90); setTimeout(()=>tone(880,.18,"square",.18,1760),190); },
     over(){ tone(300,.7,"sawtooth",.25,40); noise(.7,.4,1600); } };
 })();
@@ -362,7 +366,7 @@ function killBoss(e){ kills++; bossKills++;
   gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});        // guaranteed heal
   gems.push({x:e.x,y:e.y,vacuum:true,val:0,vx:0,vy:0});      // and a vacuum to sweep it all in
   particles.push(...burst(e.x,e.y,"#ffd400",40)); fx.push({kind:"ring",x:e.x,y:e.y,r:90,life:0.4});
-  shakeT=Math.max(shakeT,0.5); floatText("BOSS DOWN"); Sound.evolve(); Sound.crack(); }
+  shakeT=Math.max(shakeT,0.5); floatText("BOSS DOWN"); Sound.bossDie(); }
 function dropAsteroid(e){
   const n=6+Math.floor(gameTime/30), v=1+Math.floor(gameTime/60);
   for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,160); gems.push({x:e.x,y:e.y,val:v,vx:Math.cos(a)*s,vy:Math.sin(a)*s}); }
