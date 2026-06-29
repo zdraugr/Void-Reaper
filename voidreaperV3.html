@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>VOID REAPER — a Vampire-Survivors-style swarm shooter</title>
+<style>
+  html,body{
+    margin:0;height:100%;
+    background:radial-gradient(circle at 50% 35%, #0a1030 0%, #04050d 60%, #010108 100%);
+    overflow:hidden;display:flex;align-items:center;justify-content:center;
+    font-family:"Courier New",ui-monospace,monospace;color:#54f0ff;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #wrap{position:relative;}
+  canvas{
+    display:block;aspect-ratio:8/5;height:96vh;width:auto;max-width:99vw;max-height:96vh;
+    image-rendering:pixelated;background:#04050d;border:1px solid #16306b;border-radius:6px;
+    box-shadow:0 0 44px #0b2a6b55, inset 0 0 70px #00081a;cursor:crosshair;
+  }
+  #crt{position:absolute;inset:0;border-radius:6px;pointer-events:none;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.14) 3px, rgba(0,0,0,0) 4px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(0,0,0,0.5) 100%);
+    mix-blend-mode:multiply;}
+  #hint{position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:12px;letter-spacing:2px;color:#3b5aa0;}
+  @media (max-width:560px){#hint{display:none;}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="crt"></div>
+  <div id="hint">WASD / ARROWS MOVE &nbsp;·&nbsp; WEAPONS AUTO-FIRE &nbsp;·&nbsp; SPACE DASH (Afterburner) &nbsp;·&nbsp; PICK UPGRADES (1·2·3) &nbsp;·&nbsp; P PAUSE</div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   VOID REAPER — Vampire-Survivors-style reverse bullet hell.
+   Move only; weapons auto-fire. All balance numbers live in CONFIG.
+   ============================================================================ */
+const CONFIG = {
+  MAX_WEAPONS: 5, MAX_PASSIVES: 4, CHOICES: 3,
+  ENEMY_CAP: 240, DESPAWN_DIST: 1700,
+  xpNeed: lv => Math.floor(5 + lv*4 + lv*lv*2.0),
+  spawnInterval: t => Math.max(0.22, 0.95 - t*0.004),
+  spawnBatch:    t => 1 + Math.floor(t/40),
+  hpScale:       t => 1 + Math.min(t,420)*0.010,
+  eliteEvery: 55, eliteAfter: 30,
+  BOOST_SPEED: 880, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME
+  goldPerRun: (t,k) => Math.floor(t + k*0.4)      // gold earned at death
+};
+
+/* ---- persistence shim: real localStorage when run as a downloaded file,
+        silent in-memory fallback inside the sandboxed preview ---- */
+const Store = (()=>{ const mem={};
+  return {
+    get(k,def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return (k in mem)?mem[k]:def; } },
+    set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){ mem[k]=v; } }
+  };
+})();
+
+const cv = document.getElementById("game");
+const ctx = cv.getContext("2d");
+const W = cv.width, H = cv.height;
+ctx.imageSmoothingEnabled = false;
+const rand=(a,b)=>a+Math.random()*(b-a), clamp=(v,a,b)=>v<a?a:v>b?b:v, TAU=Math.PI*2;
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function inside(p,r){ return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h; }
+
+/* ---------------- pixel sprites ---------------- */
+const PAL = {1:"#54f0ff",2:"#ff3b3b",3:"#ffd400",4:"#ff9a00",5:"#ffffff",6:"#ff5ff0",7:"#46e85a",8:"#4488ff",9:"#7c8499",0:"#3c4252"};
+const SPR = {
+  player:[ ".....5.....",".....1.....","....111....","...11211...","..1112111..",".111111111.","11111111111","1..11.11..1","....2.2...." ],
+  mite:[ ".6...6.","..666..",".66666.","6656566",".66666.","6.6.6.6" ],
+  bee:[ "..8.....8..","...8...8...",".333333333.","33533333533","33333333333","8.3333333.8","8..33333..8","....3.3...." ],
+  moth:[ "2.2.....2.2",".828...828.","8.822.228.8",".8252.2528.","8.8222222.8",".8.22222.8.","8...2.2...8","....2.2...." ],
+  boss:[ "..6.......6..","...6.....6...",".77777777777.","7775777775777","7777777777777","8777777777778","8877777777788","8..7777777..8","...6.7.7.6...","..3.......3.." ],
+  asteroid:[ "...99990...","..9999990..",".999959990.","99999999900","99999999990","09999999990","09999999900",".099999900..","..0999900..","...00000..." ]
+};
+const CACHE={}, shipCanvas={};
+function bake(grid,scale,whiteOnly,remap){
+  const w=grid[0].length,h=grid.length,c=document.createElement("canvas"); c.width=w*scale; c.height=h*scale;
+  const g=c.getContext("2d");
+  for(let r=0;r<h;r++) for(let col=0;col<w;col++){ const ch=grid[r][col]; if(ch===".")continue;
+    g.fillStyle=whiteOnly?"#ffffff":((remap&&remap[ch])||PAL[ch]); g.fillRect(col*scale,r*scale,scale,scale); }
+  return c;
+}
+function cacheSprite(n,g,s){ CACHE[n]={c:bake(g,s,false),cw:bake(g,s,true),w:g[0].length*s,h:g.length*s}; }
+["player","mite","bee","moth","boss","asteroid"].forEach(n=>cacheSprite(n,SPR[n],4));
+cacheSprite("elite",SPR.boss,8);
+function blit(n,x,y,white){ const s=CACHE[n]; ctx.drawImage(white?s.cw:s.c,Math.round(x-s.w/2),Math.round(y-s.h/2)); }
+
+/* ---------------- ships (recolored hulls, one per weapon) ---------------- */
+const SHIPS = [
+  {id:"vanguard", name:"Vanguard", weapon:"blaster",  cost:0,   color:"#54f0ff"},
+  {id:"lancer",   name:"Lancer",   weapon:"scatter",  cost:80,  color:"#ffd400"},
+  {id:"warden",   name:"Warden",   weapon:"drones",   cost:180, color:"#46e85a"},
+  {id:"pyre",     name:"Pyre",     weapon:"aura",     cost:320, color:"#ff5ff0"},
+  {id:"reaver",   name:"Reaver",   weapon:"missiles", cost:500, color:"#ff9a00"},
+  {id:"stormcrow",name:"Stormcrow",weapon:"lightning",cost:720, color:"#bff6ff"}
+];
+for(const s of SHIPS){ const c=bake(SPR.player,4,false,{"1":s.color}); shipCanvas[s.id]={c,w:c.width,h:c.height}; }
+
+/* ---------------- sound ---------------- */
+const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false; const thr={};
+  function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=0.45; master.connect(ac.destination);
+    const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; }
+  function resume(){ if(ac&&ac.state==="suspended")ac.resume(); } const t=()=>ac.currentTime;
+  function tone(f,d,ty,v,sl){ if(!ac||muted)return; const o=ac.createOscillator(),g=ac.createGain(); o.type=ty; o.frequency.setValueAtTime(f,t()); if(sl)o.frequency.exponentialRampToValueAtTime(sl,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); o.connect(g); g.connect(master); o.start(); o.stop(t()+d); }
+  function noise(d,v,cut){ if(!ac||muted)return; const s=ac.createBufferSource(); s.buffer=nbuf; const g=ac.createGain(),f=ac.createBiquadFilter(); f.type="lowpass"; f.frequency.setValueAtTime(cut,t()); f.frequency.exponentialRampToValueAtTime(120,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(t()+d); }
+  function gate(k,ms){ const n=performance.now(); if((thr[k]||0)>n)return false; thr[k]=n+ms; return true; }
+  return { init,resume, toggle(){muted=!muted;return muted;},
+    shoot(){ if(gate("s",55))tone(880,.07,"square",.10,300); },
+    pop(){ if(gate("p",45))noise(.08,.18,1600); },
+    pick(){ if(gate("g",40))tone(1200,.05,"square",.06,1700); },
+    zap(){ tone(300,.12,"sawtooth",.12,1400); noise(.10,.15,3000); },
+    missile(){ noise(.18,.16,1200); tone(140,.2,"sawtooth",.08,40); },
+    boost(){ tone(260,.2,"sawtooth",.13,820); noise(.16,.12,2400); },
+    crack(){ noise(.22,.3,1400); tone(120,.25,"square",.1,50); },
+    hurt(){ if(gate("h",120)){ noise(.18,.3,900); tone(180,.18,"square",.12,70);} },
+    level(){ tone(523,.12,"square",.16,660); setTimeout(()=>tone(784,.16,"square",.16,1046),110); },
+    evolve(){ tone(440,.1,"square",.18,880); setTimeout(()=>tone(660,.1,"square",.18,1320),90); setTimeout(()=>tone(880,.18,"square",.18,1760),190); },
+    over(){ tone(300,.7,"sawtooth",.25,40); noise(.7,.4,1600); } };
+})();
+
+/* ============================================================================
+   STATE + META
+   ============================================================================ */
+let state="start", now=0, last=0, gameTime=0, kills=0;
+let shakeT=0, sx=0, sy=0, lastEarned=0;
+let gold = Store.get("vr_gold",0);
+let unlocked = Store.get("vr_ships",["vanguard"]);
+let selectedShip = Store.get("vr_sel","vanguard");
+let bestTime = Store.get("vr_best",0);
+if(!unlocked.includes(selectedShip)) selectedShip="vanguard";
+
+const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
+  weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1} };
+let enemies=[], shots=[], gems=[], particles=[], fx=[], floats=[];
+let spawnTimer=0, eliteTimer=0, asteroidTimer=0;
+const keys={}; let mouse={x:W/2,y:H/2}; let shipRects=[];
+const stars=[]; let prevX=0, prevY=0;
+for(let i=0;i<170;i++){ const L=i%3; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.25,0.55,1.0][L],sz:[1,1,2][L],c:["#1d2c5a","#3a5fb0","#9fc4ff"][L]}); }
+
+/* ---------------- stat getters ---------------- */
+const P=id=>player.passives[id]||0;
+const maxHP=()=>100+30*P("reactor");
+const moveSpeed=()=>175*(1+0.09*P("engine"));
+const dmgMult=()=>1+0.18*P("amp");
+const cdMult=()=>Math.max(0.40,1-0.09*P("coolant"));
+const magnetR=()=>78+30*P("magnet");
+const regen=()=>0.5*P("nanobots");
+const boostCdMax=()=>7-P("boost");
+
+/* ============================================================================
+   UPGRADE REGISTRY
+   ============================================================================ */
+const WDEF={
+  blaster:{name:"Pulse Blaster",max:5,color:"#54f0ff",desc:"Auto-fires bolts at the nearest foe.",evoReq:"coolant",evoId:"railgun"},
+  drones:{name:"Orbit Drones",max:5,color:"#46e85a",desc:"Drones circle you, shredding what they touch.",evoReq:"magnet",evoId:"halo"},
+  aura:{name:"Plasma Field",max:5,color:"#ff5ff0",desc:"A searing aura burns everything near you.",evoReq:"reactor",evoId:"singularity"},
+  scatter:{name:"Scatter Cannon",max:5,color:"#ffd400",desc:"A spread of pellets in your travel direction.",evoReq:"engine",evoId:"nova"},
+  missiles:{name:"Seeker Pods",max:5,color:"#ff9a00",desc:"Homing missiles that detonate on impact.",evoReq:"amp",evoId:"hunter"},
+  lightning:{name:"Arc Coil",max:5,color:"#bff6ff",desc:"Chains lightning to nearby enemies.",evoReq:"nanobots",evoId:"tempest"},
+  railgun:{name:"Rail Lance",color:"#bff6ff",desc:"A piercing rail bolt that runs the whole swarm through.",evolved:true},
+  halo:{name:"Halo Swarm",color:"#46e85a",desc:"Eight heavy drones in a wide, lethal ring.",evolved:true},
+  singularity:{name:"Singularity",color:"#ff5ff0",desc:"A vast field that drags foes in and melts them.",evolved:true},
+  nova:{name:"Nova Burst",color:"#ffd400",desc:"Pellets erupt in every direction at once.",evolved:true},
+  hunter:{name:"Hunter Swarm",color:"#ff9a00",desc:"A volley of seekers with bigger blasts.",evolved:true},
+  tempest:{name:"Tempest",color:"#bff6ff",desc:"Lightning forks across the entire mob.",evolved:true}
+};
+const BASE_WEAPONS=["blaster","drones","aura","scatter","missiles","lightning"];
+const PDEF={
+  engine:{name:"Ion Thrusters",max:5,color:"#54f0ff",desc:"+9% movement speed."},
+  amp:{name:"Damage Amp",max:5,color:"#ff3b3b",desc:"+18% weapon damage."},
+  coolant:{name:"Coolant Cells",max:5,color:"#4488ff",desc:"-9% weapon cooldowns."},
+  magnet:{name:"Tractor Field",max:5,color:"#ff5ff0",desc:"+pickup range for energy."},
+  reactor:{name:"Reactor Core",max:5,color:"#46e85a",desc:"+30 max HP (and heals)."},
+  nanobots:{name:"Nanobots",max:5,color:"#ffd400",desc:"Regenerates HP over time."},
+  boost:{name:"Afterburner",max:5,color:"#bff6ff",desc:"Tap SPACE to dash forward with brief i-frames. Levels cut the cooldown."}
+};
+const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning"};
+const getWeapon=base=>player.weapons.find(w=>w.base===base);
+
+/* ============================================================================
+   WEAPONS
+   ============================================================================ */
+function nearest(x,y,maxR){ let best=null,bd=maxR?maxR*maxR:Infinity;
+  for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=e;} } return best; }
+function kNearest(x,y,k,maxR){ const list=[],r2=maxR*maxR;
+  for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-x,dy=e.y-y,d=dx*dx+dy*dy; if(d<r2)list.push([d,e]); }
+  list.sort((a,b)=>a[0]-b[0]); return list.slice(0,k).map(p=>p[1]); }
+function spawnShot(o){ if(shots.length<500) shots.push(o); }
+function droneParams(){ const w=getWeapon("drones"); if(!w)return null;
+  if(w.evo)return {count:8,R:112,r:16,dmg:24*dmgMult(),tick:0.12};
+  const lv=w.level; return {count:1+lv,R:54+6*lv,r:12,dmg:(7+4*lv)*dmgMult(),tick:0.16}; }
+function auraInfo(){ const w=getWeapon("aura"); if(!w)return null;
+  if(w.evo)return {R:140,dmg:20*dmgMult(),tick:0.25,pull:true};
+  const lv=w.level; return {R:40+13*lv,dmg:(4+3*lv)*dmgMult(),tick:0.35,pull:false}; }
+
+function fireWeapons(dt){
+  for(const w of player.weapons){ w.timer-=dt; const lv=w.level,evo=w.evo;
+    switch(w.base){
+      case "blaster": if(w.timer<=0){
+        if(evo){ w.timer=0.45*cdMult(); const t=nearest(player.x,player.y,950);
+          if(t){ const a=Math.atan2(t.y-player.y,t.x-player.x); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*900,vy:Math.sin(a)*900,dmg:70*dmgMult(),pierce:99,r:9,life:1.3,color:"#bff6ff",kind:"bolt"}); Sound.shoot(); }
+        } else { w.timer=0.85*cdMult(); const ts=kNearest(player.x,player.y,1+Math.floor((lv-1)/2),520),dmg=(9+5*lv)*dmgMult(),pierce=Math.floor(lv/3);
+          for(const t of ts){ const a=Math.atan2(t.y-player.y,t.x-player.x); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*520,vy:Math.sin(a)*520,dmg,pierce,r:7,life:1.4,color:"#bff6ff",kind:"bolt"}); } if(ts.length)Sound.shoot(); }
+      } break;
+      case "scatter": if(w.timer<=0){
+        if(evo){ w.timer=0.7*cdMult(); const dmg=18*dmgMult(); for(let i=0;i<16;i++){ const a=i/16*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*440,vy:Math.sin(a)*440,dmg,pierce:0,r:6,life:0.8,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
+        else { w.timer=1.25*cdMult(); const pel=3+lv,base=player.facing,dmg=(5+3*lv)*dmgMult(); for(let i=0;i<pel;i++){ const a=base+(i/(pel-1)-0.5); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.55,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
+      } break;
+      case "missiles": if(w.timer<=0){
+        let count,dmg,blast,cd; if(evo){count=6;dmg=38*dmgMult();blast=52;cd=0.9;} else {count=1+Math.floor(lv/2);dmg=(14+7*lv)*dmgMult();blast=36;cd=1.5;}
+        w.timer=cd*cdMult(); const ts=kNearest(player.x,player.y,count,750);
+        for(let i=0;i<count;i++){ const a=rand(0,TAU),t=ts[i]||nearest(player.x,player.y,950); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*120,vy:Math.sin(a)*120,dmg,pierce:0,r:6,life:3,color:"#ff9a00",kind:"missile",target:t,blast}); } Sound.missile();
+      } break;
+      case "lightning": if(w.timer<=0){
+        let n,dmg,cd; if(evo){n=10;dmg=34*dmgMult();cd=0.8;} else {n=2+lv;dmg=(13+7*lv)*dmgMult();cd=1.45;}
+        w.timer=cd*cdMult(); const tg=kNearest(player.x,player.y,n,600); let from={x:player.x,y:player.y};
+        for(const e of tg){ fx.push({kind:"arc",x1:from.x,y1:from.y,x2:e.x,y2:e.y,life:0.18}); hurtEnemy(e,dmg); from=e; } if(tg.length)Sound.zap();
+      } break;
+      case "aura": { const ai=auraInfo(); if(w.timer<=0){ w.timer=ai.tick;
+        for(const e of enemies){ if(e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y,d2=dx*dx+dy*dy;
+          if(d2<ai.R*ai.R){ hurtEnemy(e,ai.dmg); if(ai.pull&&!e.asteroid){ const d=Math.sqrt(d2)||1,m=Math.min(d*0.12,14); e.x-=dx/d*m; e.y-=dy/d*m; } } } } } break;
+      case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
+        for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
+          for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
+    }
+  }
+}
+
+/* ============================================================================
+   ENEMIES + ASTEROIDS + GRID
+   ============================================================================ */
+const TYPES={ mite:{spr:"mite",hp:2,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:4,sp:80,val:1,dmg:7,r:14},
+  moth:{spr:"moth",hp:9,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:26,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true} };
+function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
+  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false}); }
+function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=5)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
+  const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(40+gameTime*0.6);
+  enemies.push({asteroid:true,spr:"asteroid",x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:0,val:0,dmg:0,r:20,big:false,flash:0,dead:false}); }
+function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0]];
+  let sum=0; for(const w of wts)sum+=w[1]; let r=Math.random()*sum; for(const w of wts){ r-=w[1]; if(r<=0)return w[0]; } return "bee"; }
+
+const CELL=72; let grid=new Map(); const gkey=(cx,cy)=>cx+","+cy;
+function buildGrid(){ grid.clear(); for(const e of enemies){ if(e.dead)continue; const k=gkey(Math.floor(e.x/CELL),Math.floor(e.y/CELL)); let a=grid.get(k); if(!a){a=[];grid.set(k,a);} a.push(e); } }
+function queryNear(x,y,r){ const res=[],x0=Math.floor((x-r)/CELL),x1=Math.floor((x+r)/CELL),y0=Math.floor((y-r)/CELL),y1=Math.floor((y+r)/CELL);
+  for(let cx=x0;cx<=x1;cx++)for(let cy=y0;cy<=y1;cy++){ const a=grid.get(gkey(cx,cy)); if(a)for(const e of a)res.push(e); } return res; }
+function separate(){ for(const e of enemies){ if(e.dead||e.asteroid)continue; const cx=Math.floor(e.x/CELL),cy=Math.floor(e.y/CELL); let checks=0;
+  for(let ix=cx-1;ix<=cx+1&&checks<10;ix++)for(let iy=cy-1;iy<=cy+1&&checks<10;iy++){ const a=grid.get(gkey(ix,iy)); if(!a)continue;
+    for(const o of a){ if(o===e||o.dead)continue; checks++; const dx=e.x-o.x,dy=e.y-o.y,md=e.r+o.r,d2=dx*dx+dy*dy;
+      if(d2>0&&d2<md*md){ const d=Math.sqrt(d2),push=(md-d)*0.5/d; e.x+=dx*push; e.y+=dy*push; } } } } }
+
+/* ============================================================================
+   DAMAGE / DEATH / DROPS
+   ============================================================================ */
+function hurtEnemy(e,dmg){ if(e.dead)return; e.hp-=dmg; e.flash=0.07;
+  if(e.hp<=0){ e.dead=true;
+    if(e.asteroid){ dropAsteroid(e); Sound.crack(); }
+    else { kills++;
+      particles.push(...burst(e.x,e.y,e.big?"#46e85a":e.spr==="moth"?"#ff3b3b":e.spr==="mite"?"#ff5ff0":"#ffd400",e.big?22:8));
+      gems.push({x:e.x,y:e.y,val:e.val,vx:rand(-30,30),vy:rand(-30,30)});
+      if(e.big&&Math.random()<0.8) gems.push({x:e.x+rand(-14,14),y:e.y+rand(-14,14),val:e.val,vx:0,vy:0,heal:true});
+      Sound.pop(); } } }
+function dropAsteroid(e){
+  const n=6+Math.floor(gameTime/30), v=1+Math.floor(gameTime/60);
+  for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,160); gems.push({x:e.x,y:e.y,val:v,vx:Math.cos(a)*s,vy:Math.sin(a)*s}); }
+  if(Math.random()<0.25) gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});
+  if(Math.random()<0.10) gems.push({x:e.x,y:e.y,vacuum:true,val:0,vx:0,vy:0});
+  particles.push(...burst(e.x,e.y,"#9fa7bd",18)); fx.push({kind:"ring",x:e.x,y:e.y,r:34,life:0.25}); floatText("SALVAGE!");
+}
+function explodeAt(x,y,r,dmg){ for(const e of queryNear(x,y,r)){ const dx=e.x-x,dy=e.y-y; if(dx*dx+dy*dy<r*r) hurtEnemy(e,dmg); }
+  particles.push(...burst(x,y,"#ff9a00",16)); fx.push({kind:"ring",x,y,r,life:0.25}); }
+function burst(x,y,c,n){ const out=[]; for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,260); out.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.3,.6),max:.6,c,sz:rand(2,4)}); } return out; }
+
+/* ============================================================================
+   XP / LEVEL UP
+   ============================================================================ */
+function gainXP(v){ player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
+  if(player.pendingLevels>0&&state==="playing") openLevelUp(); }
+let levelChoices=[];
+function buildChoices(){
+  const pool=[],oW=player.weapons.length,oP=Object.keys(player.passives).length;
+  for(const w of player.weapons){ if(w.evo)continue; if(w.level<WDEF[w.id].max) pool.push({kind:"wup",base:w.base,id:w.id}); }
+  for(const w of player.weapons){ if(w.evo)continue; const D=WDEF[w.id]; if(D.evoId&&w.level>=D.max&&P(D.evoReq)>=1) pool.push({kind:"evolve",base:w.base,id:D.evoId,req:D.evoReq}); }
+  if(oW<CONFIG.MAX_WEAPONS) for(const id of BASE_WEAPONS) if(!getWeapon(id)) pool.push({kind:"wnew",id});
+  for(const id in PDEF) if(P(id)>0&&P(id)<PDEF[id].max) pool.push({kind:"pup",id});
+  if(oP<CONFIG.MAX_PASSIVES) for(const id in PDEF) if(!(id in player.passives)) pool.push({kind:"pnew",id});
+  shuffle(pool);
+  const evo=pool.find(c=>c.kind==="evolve"); let out=pool.slice(0,CONFIG.CHOICES);
+  if(evo&&!out.includes(evo)) out[CONFIG.CHOICES-1]=evo;
+  while(out.length<CONFIG.CHOICES) out.push({kind:"heal"});
+  const cardW=200,cardH=250,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
+  out.forEach((c,i)=>{ c.rect={x:x0+i*(cardW+gap),y:y0,w:cardW,h:cardH};
+    if(c.kind==="wnew"){ const d=WDEF[c.id]; c.title=d.name;c.tag="NEW WEAPON";c.color=d.color;c.text=d.desc; }
+    else if(c.kind==="wup"){ const d=WDEF[c.id]; c.title=d.name;c.tag="Lv "+(getWeapon(c.base).level+1);c.color=d.color;c.text=d.desc; }
+    else if(c.kind==="evolve"){ const d=WDEF[c.id]; c.title=d.name;c.tag="✦ EVOLVE ✦";c.color="#ffd400";c.text=d.desc; }
+    else if(c.kind==="pnew"){ const d=PDEF[c.id]; c.title=d.name;c.tag="NEW PASSIVE";c.color=d.color;c.text=d.desc; }
+    else if(c.kind==="pup"){ const d=PDEF[c.id]; c.title=d.name;c.tag="Lv "+(P(c.id)+1);c.color=d.color;c.text=d.desc; }
+    else { c.title="Repair Hull";c.tag="+30% HP";c.color="#46e85a";c.text="Nothing left to install — patch the hull instead."; } });
+  levelChoices=out;
+}
+function openLevelUp(){ state="levelup"; buildChoices(); Sound.level(); }
+function choose(i){ const c=levelChoices[i]; if(!c)return;
+  if(c.kind==="wnew") player.weapons.push({id:c.id,base:c.id,level:1,timer:0,evo:false});
+  else if(c.kind==="wup") getWeapon(c.base).level++;
+  else if(c.kind==="evolve"){ const w=getWeapon(c.base); w.id=c.id;w.evo=true;w.timer=0; floatText("EVOLVED — "+WDEF[c.id].name); Sound.evolve(); }
+  else if(c.kind==="pnew"){ player.passives[c.id]=1; if(c.id==="reactor")player.hp=Math.min(maxHP(),player.hp+30); }
+  else if(c.kind==="pup"){ player.passives[c.id]=P(c.id)+1; if(c.id==="reactor")player.hp=Math.min(maxHP(),player.hp+30); }
+  else if(c.kind==="heal") player.hp=Math.min(maxHP(),player.hp+maxHP()*0.3);
+  player.pendingLevels--; if(player.pendingLevels>0) buildChoices(); else state="playing";
+}
+
+/* ============================================================================
+   INPUT
+   ============================================================================ */
+function tryBoost(){ if(P("boost")<=0||player.boosting>0||player.boostCd>0)return;
+  player.boosting=CONFIG.BOOST_TIME; player.boostCd=boostCdMax(); player.invuln=Math.max(player.invuln,now+280);
+  player.boostDir={x:Math.cos(player.facing),y:Math.sin(player.facing)};
+  particles.push(...burst(player.x,player.y,"#bff6ff",10)); Sound.boost(); }
+addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
+  if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyW","KeyA","KeyS","KeyD"].includes(e.code)) e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==="KeyM"){ const m=Sound.toggle(); floatText(m?"MUTED":"SOUND ON"); }
+  if(e.code==="KeyP"&&(st==="playing"||st==="paused")) state=st==="playing"?"paused":"playing";
+  if(e.code==="Space"||e.code==="Enter"){ if(st==="start") startGame(); else if(st==="gameover") state="start"; }
+  if(st==="playing"&&e.code==="Space") tryBoost();
+  if(st==="levelup"){ if(e.code==="Digit1")choose(0); if(e.code==="Digit2")choose(1); if(e.code==="Digit3")choose(2); }
+},{passive:false});
+addEventListener("keyup",e=>{ keys[e.code]=false; });
+document.addEventListener("visibilitychange",()=>{ if(document.hidden&&state==="playing") state="paused"; });
+function canvasPos(ev){ const r=cv.getBoundingClientRect(); return {x:(ev.clientX-r.left)*(W/r.width),y:(ev.clientY-r.top)*(H/r.height)}; }
+cv.addEventListener("mousemove",ev=>{ mouse=canvasPos(ev); });
+cv.addEventListener("click",ev=>{ Sound.init(); Sound.resume(); const m=canvasPos(ev),st=state;
+  if(st==="levelup"){ levelChoices.forEach((c,i)=>{ if(inside(m,c.rect)) choose(i); }); }
+  else if(st==="gameover"){ state="start"; }
+  else if(st==="start"){ for(const r of shipRects){ if(inside(m,r)){ const s=r.ship;
+    if(unlocked.includes(s.id)){ selectedShip=s.id; Store.set("vr_sel",selectedShip); }
+    else if(gold>=s.cost){ gold-=s.cost; unlocked.push(s.id); selectedShip=s.id; Store.set("vr_gold",gold); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Sound.level(); }
+    else floatText("NOT ENOUGH GOLD"); } } }
+});
+function floatText(t){ floats.push({t,x:W/2,y:H/2-40,life:1.4}); }
+
+/* ============================================================================
+   START / RESET
+   ============================================================================ */
+function startGame(){
+  const ship=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
+  player.x=0;player.y=0;player.hp=100;player.invuln=0;player.facing=-Math.PI/2;player.orbit=0;
+  player.level=1;player.xp=0;player.pendingLevels=0;player.ship=ship.id;player.boostCd=0;player.boosting=0;
+  player.weapons=[{id:ship.weapon,base:ship.weapon,level:1,timer:0,evo:false}]; player.passives={};
+  enemies=[];shots=[];gems=[];particles=[];fx=[];floats=[];
+  gameTime=0;kills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;prevX=0;prevY=0; state="playing";
+}
+function gameOver(){ state="gameover"; lastEarned=CONFIG.goldPerRun(gameTime,kills); gold+=lastEarned; Store.set("vr_gold",gold);
+  if(gameTime>bestTime){ bestTime=gameTime; Store.set("vr_best",bestTime); } Sound.over(); shakeT=0.5; }
+
+/* ============================================================================
+   UPDATE
+   ============================================================================ */
+function update(dt){
+  for(const f of floats){ f.y-=20*dt; f.life-=dt*0.7; } floats=floats.filter(f=>f.life>0);
+  for(const p of particles){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.92; p.vy*=0.92; p.life-=dt; }
+  if(particles.length>500) particles.splice(0,particles.length-500); particles=particles.filter(p=>p.life>0);
+  for(const e of fx) e.life-=dt; fx=fx.filter(e=>e.life>0);
+  if(shakeT>0){ shakeT-=dt; const m=shakeT*18; sx=rand(-m,m); sy=rand(-m,m); } else sx=sy=0;
+  if(state!=="playing") return;
+  gameTime+=dt;
+
+  // movement (with dash)
+  if(player.boostCd>0) player.boostCd-=dt;
+  if(player.boosting>0){ player.x+=player.boostDir.x*CONFIG.BOOST_SPEED*dt; player.y+=player.boostDir.y*CONFIG.BOOST_SPEED*dt; player.boosting-=dt; }
+  else { let mx=0,my=0;
+    if(keys["ArrowLeft"]||keys["KeyA"])mx-=1; if(keys["ArrowRight"]||keys["KeyD"])mx+=1;
+    if(keys["ArrowUp"]||keys["KeyW"])my-=1; if(keys["ArrowDown"]||keys["KeyS"])my+=1;
+    if(mx||my){ const l=Math.hypot(mx,my); mx/=l; my/=l; player.facing=Math.atan2(my,mx); }
+    else { const t=nearest(player.x,player.y,9999); if(t)player.facing=Math.atan2(t.y-player.y,t.x-player.x); }
+    const spd=moveSpeed(); player.x+=mx*spd*dt; player.y+=my*spd*dt; }
+  player.orbit+=dt*2.2; player.hp=Math.min(maxHP(),player.hp+regen()*dt);
+
+  // spawning
+  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); const b=CONFIG.spawnBatch(gameTime); for(let i=0;i<b;i++)spawnEnemy(pickKind()); }
+  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnEnemy("elite"); shakeT=0.25; }
+  asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=rand(7,11); spawnAsteroid(); }
+
+  // chase + despawn
+  const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
+  for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt;
+    const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2){ e.dead=true; continue; }
+    if(!e.asteroid){ e.x+=dx/d*e.sp*dt; e.y+=dy/d*e.sp*dt; } }
+  buildGrid(); separate(); fireWeapons(dt);
+
+  // projectiles
+  for(const s of shots){ if(s.kind==="missile"&&s.target){ if(s.target.dead)s.target=nearest(s.x,s.y,700);
+      if(s.target){ const a=Math.atan2(s.target.y-s.y,s.target.x-s.x),cur=Math.atan2(s.vy,s.vx); let da=a-cur; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
+        const na=cur+clamp(da,-4*dt,4*dt),sp=Math.min(460,Math.hypot(s.vx,s.vy)+700*dt); s.vx=Math.cos(na)*sp; s.vy=Math.sin(na)*sp; } }
+    s.x+=s.vx*dt; s.y+=s.vy*dt; s.life-=dt; }
+  for(const s of shots){ if(s.life<=0)continue;
+    for(const e of queryNear(s.x,s.y,s.r+22)){ if(e.dead)continue; const dx=e.x-s.x,dy=e.y-s.y,rr=e.r+s.r;
+      if(dx*dx+dy*dy<rr*rr){ if(s.kind==="missile"){ explodeAt(s.x,s.y,s.blast,s.dmg); s.life=0; break; }
+        hurtEnemy(e,s.dmg); if(s.pierce>0)s.pierce--; else { s.life=0; break; } } } }
+  shots=shots.filter(s=>s.life>0&&Math.abs(s.x-player.x)<1200&&Math.abs(s.y-player.y)<1200);
+
+  // contact damage (asteroids don't hurt you)
+  if(now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+10;
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=e.dmg; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0){ player.hp=0; gameOver(); } break; } } }
+
+  // gems (magnet, pickup, vacuum)
+  const mr=(gems.length>320?4000:magnetR());
+  for(const g of gems){ const dx=player.x-g.x,dy=player.y-g.y,d=Math.hypot(dx,dy)||1;
+    if(d<mr){ const pull=Math.min(520,120+(mr-d)*4); g.vx=dx/d*pull; g.vy=dy/d*pull; }
+    g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.9; g.vy*=0.9;
+    if(d<16){ g.got=true;
+      if(g.vacuum){ let tot=0; for(const o of gems){ if(o===g||o.got)continue; if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val; o.got=true; } gainXP(tot); floatText("VACUUM!"); Sound.pick(); }
+      else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+25); floatText("+25 HP"); }
+      else { gainXP(g.val); Sound.pick(); } } }
+  gems=gems.filter(g=>!g.got);
+  enemies=enemies.filter(e=>!e.dead);
+}
+
+/* ============================================================================
+   RENDER
+   ============================================================================ */
+function fmtTime(s){ const m=Math.floor(s/60),sec=Math.floor(s%60); return String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"); }
+function drawStars(){ const dx=player.x-prevX,dy=player.y-prevY; prevX=player.x; prevY=player.y;
+  for(const st of stars){ st.x-=dx*st.f; st.y-=dy*st.f; if(st.x<0)st.x+=W; if(st.x>W)st.x-=W; if(st.y<0)st.y+=H; if(st.y>H)st.y-=H; ctx.fillStyle=st.c; ctx.fillRect(st.x|0,st.y|0,st.sz,st.sz); } }
+
+function drawWorld(){
+  ctx.save(); ctx.translate(Math.round(W/2-player.x+sx),Math.round(H/2-player.y+sy));
+  // gems — XP=lime, heal=green plus, vacuum=white glow
+  for(const g of gems){ const gx=Math.round(g.x),gy=Math.round(g.y);
+    if(g.vacuum){ ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#bff6ff"; ctx.fillStyle="#fff"; ctx.fillRect(gx-4,gy-4,8,8); ctx.restore(); }
+    else if(g.heal){ ctx.fillStyle="#46e85a"; ctx.fillRect(gx-1,gy-4,2,8); ctx.fillRect(gx-4,gy-1,8,2); }
+    else { ctx.fillStyle="#b8ff3a"; ctx.fillRect(gx-3,gy-3,6,6); ctx.fillStyle="#eaffb0"; ctx.fillRect(gx-1,gy-1,2,2); } }
+
+  const ai=auraInfo();
+  if(ai){ ctx.save(); ctx.globalAlpha=0.12+0.04*Math.sin(now/120); ctx.fillStyle="#ff5ff0"; ctx.beginPath(); ctx.arc(player.x,player.y,ai.R,0,TAU); ctx.fill();
+    ctx.globalAlpha=0.5; ctx.strokeStyle="#ff5ff0"; ctx.lineWidth=2; ctx.stroke(); ctx.restore(); }
+
+  for(const e of enemies) blit(e.spr,e.x,e.y,e.flash>0);
+  for(const e of enemies){ if(!e.big&&!e.asteroid)continue; const w=e.asteroid?40:46;
+    ctx.fillStyle="#300"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w,4);
+    ctx.fillStyle=e.asteroid?"#9fa7bd":"#46e85a"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w*(e.hp/e.maxhp),4); }
+
+  ctx.save(); ctx.shadowBlur=6;
+  for(const s of shots){ ctx.shadowColor=s.color; ctx.fillStyle=s.color;
+    if(s.kind==="missile") ctx.fillRect(Math.round(s.x-3),Math.round(s.y-3),6,6); else ctx.fillRect(Math.round(s.x-s.r/2),Math.round(s.y-s.r/2),s.r,s.r); } ctx.restore();
+
+  for(const e of fx){ if(e.kind==="arc"){ ctx.globalAlpha=clamp(e.life/0.18,0,1); ctx.strokeStyle="#bff6ff"; ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor="#bff6ff"; ctx.beginPath(); ctx.moveTo(e.x1,e.y1); ctx.lineTo(e.x2,e.y2); ctx.stroke(); ctx.shadowBlur=0; ctx.globalAlpha=1; }
+    if(e.kind==="ring"){ ctx.globalAlpha=clamp(e.life/0.25,0,1); ctx.strokeStyle="#ff9a00"; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*(1.4-e.life/0.25*0.4),0,TAU); ctx.stroke(); ctx.globalAlpha=1; } }
+
+  const dp=droneParams();
+  if(dp){ for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
+    ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#46e85a"; ctx.fillStyle="#46e85a"; ctx.beginPath(); ctx.arc(dx,dy,dp.r*0.6,0,TAU); ctx.fill(); ctx.restore(); } }
+
+  const blink=now<player.invuln&&Math.floor(now/60)%2===0;
+  if(!blink){ const s=shipCanvas[player.ship]||shipCanvas.vanguard; ctx.save(); ctx.translate(player.x,player.y); ctx.rotate(player.facing+Math.PI/2); ctx.drawImage(s.c,-s.w/2,-s.h/2); ctx.restore(); }
+
+  for(const p of particles){ ctx.globalAlpha=Math.max(0,p.life/p.max); ctx.fillStyle=p.c; ctx.fillRect(Math.round(p.x-p.sz/2),Math.round(p.y-p.sz/2),p.sz,p.sz); }
+  ctx.globalAlpha=1; ctx.restore();
+}
+
+function bar(x,y,w,h,frac,col,bg){ ctx.fillStyle=bg; ctx.fillRect(x,y,w,h); ctx.fillStyle=col; ctx.fillRect(x,y,w*clamp(frac,0,1),h); }
+function drawHUD(){
+  bar(0,0,W,8,player.xp/CONFIG.xpNeed(player.level),"#54f0ff","#0a1430");
+  bar(14,18,220,16,player.hp/maxHP(),"#46e85a","#102015");
+  ctx.fillStyle="#cfe"; ctx.font="bold 12px 'Courier New',monospace"; ctx.textAlign="left"; ctx.fillText(Math.ceil(player.hp)+" / "+maxHP()+" HP",18,30);
+  ctx.fillStyle="#3a5fb0"; ctx.font="12px 'Courier New',monospace";
+  ctx.fillText("WPN "+player.weapons.length+"/"+CONFIG.MAX_WEAPONS+"   PSV "+Object.keys(player.passives).length+"/"+CONFIG.MAX_PASSIVES,14,46);
+  // dash readiness
+  if(P("boost")>0){ const ready=player.boostCd<=0; bar(14,52,90,6,ready?1:1-player.boostCd/boostCdMax(),ready?"#bff6ff":"#2a3550","#0a1430");
+    ctx.fillStyle=ready?"#bff6ff":"#3a5fb0"; ctx.font="10px 'Courier New',monospace"; ctx.fillText(ready?"DASH READY":"DASH",110,58); }
+  ctx.font="bold 16px 'Courier New',monospace"; ctx.fillStyle="#ffd400"; ctx.textAlign="left"; ctx.fillText("LV "+player.level,14,80);
+  ctx.textAlign="center"; ctx.fillStyle="#54f0ff"; ctx.fillText(fmtTime(gameTime),W/2,28);
+  ctx.textAlign="right"; ctx.fillStyle="#ff5ff0"; ctx.fillText("KILLS "+kills,W-14,28);
+  let x=14,y=H-26;
+  for(const w of player.weapons){ const D=WDEF[w.id]; ctx.fillStyle="rgba(8,14,34,0.85)"; ctx.fillRect(x,y,128,20); ctx.fillStyle=D.color; ctx.fillRect(x,y,3,20);
+    ctx.font="11px 'Courier New',monospace"; ctx.textAlign="left"; let label;
+    if(w.evo){ label=D.name.split(" ")[0]+" ✦"; ctx.fillStyle="#ffd400"; }
+    else { const B=WDEF[w.base]; label=B.name.split(" ")[0]+" "+w.level; if(w.level>=B.max&&P(B.evoReq)<1)label+=" +"+PDEF[B.evoReq].name.split(" ")[0]; ctx.fillStyle="#cfe"; }
+    ctx.fillText(label,x+8,y+14); x+=134; if(x>W-130){ x=14; y-=24; } }
+}
+
+function drawIcon(c,cx,cy,r){ ctx.save(); ctx.translate(cx,cy); ctx.strokeStyle=c.color; ctx.fillStyle=c.color; ctx.lineWidth=3;
+  const id=ICON_OF[c.id]||c.id, ring=rad=>{ ctx.beginPath(); ctx.arc(0,0,rad,0,TAU); ctx.stroke(); };
+  if(id==="blaster"){ ctx.fillRect(-3,-r,6,r*2); }
+  else if(id==="drones"){ ring(r*0.8); ctx.beginPath(); ctx.arc(r*0.8,0,4,0,TAU); ctx.fill(); ctx.beginPath(); ctx.arc(-r*0.8,0,4,0,TAU); ctx.fill(); }
+  else if(id==="aura"){ ring(r*0.55); ring(r*0.95); }
+  else if(id==="scatter"){ for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.arc(i*r*0.5,r*0.4,3,0,TAU); ctx.fill(); } }
+  else if(id==="missiles"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.6,r*0.6); ctx.lineTo(-r*0.6,r*0.6); ctx.closePath(); ctx.fill(); }
+  else if(id==="lightning"){ ctx.beginPath(); ctx.moveTo(-r*0.4,-r); ctx.lineTo(r*0.2,-r*0.1); ctx.lineTo(-r*0.2,0); ctx.lineTo(r*0.4,r); ctx.stroke(); }
+  else if(id==="engine"){ for(let i=0;i<2;i++){ ctx.beginPath(); ctx.moveTo(-r*0.6,-r*0.4+i*r*0.7); ctx.lineTo(0,r*0.1+i*r*0.7); ctx.lineTo(r*0.6,-r*0.4+i*r*0.7); ctx.stroke(); } }
+  else if(id==="amp"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.8,r*0.6); ctx.lineTo(-r*0.8,r*0.6); ctx.closePath(); ctx.fill(); }
+  else if(id==="coolant"){ for(let i=0;i<6;i++){ ctx.save(); ctx.rotate(i*Math.PI/3); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-r); ctx.stroke(); ctx.restore(); } }
+  else if(id==="magnet"){ ctx.beginPath(); ctx.arc(0,0,r*0.8,Math.PI*0.15,Math.PI*0.85,true); ctx.stroke(); ctx.fillRect(-r*0.8-2,-2,6,r*0.5); ctx.fillRect(r*0.8-4,-2,6,r*0.5); }
+  else if(id==="reactor"){ ring(r*0.85); ctx.fillRect(-2,-r*0.5,4,r); ctx.fillRect(-r*0.5,-2,r,4); }
+  else if(id==="nanobots"){ for(const p of [[-r*0.4,-r*0.4],[r*0.4,0],[-r*0.2,r*0.4]]){ ctx.fillRect(p[0]-1,p[1]-5,3,11); ctx.fillRect(p[0]-5,p[1]-1,11,3); } }
+  else if(id==="boost"){ ctx.beginPath(); ctx.moveTo(-r*0.5,-r); ctx.lineTo(r*0.3,0); ctx.lineTo(-r*0.5,r); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.8,0); ctx.lineTo(0,r); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(0,0,r*0.6,0,TAU); ctx.fill(); }
+  ctx.restore(); }
+function wrap(text,x,y,maxW,lh,color){ ctx.fillStyle=color; ctx.font="13px 'Courier New',monospace"; ctx.textAlign="center"; const words=text.split(" "); let line="",yy=y;
+  for(const w of words){ const test=line?line+" "+w:w; if(ctx.measureText(test).width>maxW){ ctx.fillText(line,x,yy); line=w; yy+=lh; } else line=test; } ctx.fillText(line,x,yy); }
+
+function drawLevelUp(){ ctx.fillStyle="rgba(4,5,13,0.78)"; ctx.fillRect(0,0,W,H);
+  ctx.textAlign="center"; ctx.fillStyle="#ffd400"; ctx.font="bold 30px 'Courier New',monospace"; ctx.save(); ctx.shadowBlur=16; ctx.shadowColor="#ffd400"; ctx.fillText("LEVEL UP — CHOOSE AN UPGRADE",W/2,H/2-150); ctx.restore();
+  levelChoices.forEach((c,i)=>{ const r=c.rect,hov=inside(mouse,r),isEvo=c.kind==="evolve";
+    ctx.fillStyle=hov?"rgba(20,30,60,0.95)":"rgba(10,16,36,0.95)"; ctx.fillRect(r.x,r.y,r.w,r.h);
+    if(isEvo){ ctx.save(); ctx.shadowBlur=14; ctx.shadowColor="#ffd400"; } ctx.strokeStyle=c.color; ctx.lineWidth=isEvo?3:(hov?3:2); ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2); if(isEvo)ctx.restore();
+    drawIcon(c,r.x+r.w/2,r.y+58,26);
+    ctx.fillStyle=c.color; ctx.font="bold 12px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText(c.tag,r.x+r.w/2,r.y+100);
+    ctx.fillStyle="#fff"; ctx.font="bold 16px 'Courier New',monospace"; ctx.fillText(c.title,r.x+r.w/2,r.y+126);
+    wrap(c.text,r.x+r.w/2,r.y+154,r.w-26,18,"#9fc4ff");
+    ctx.fillStyle=c.color; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("["+(i+1)+"]",r.x+r.w/2,r.y+r.h-16); });
+}
+function center(lines,baseY){ ctx.textAlign="center"; lines.forEach((l,i)=>{ ctx.fillStyle=l.c; ctx.font=l.f; if(l.g){ctx.save();ctx.shadowBlur=18;ctx.shadowColor=l.c;} ctx.fillText(l.t,W/2,baseY+i*l.lh); if(l.g)ctx.restore(); }); }
+
+function drawStart(){
+  center([{t:"V O I D   R E A P E R",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],66);
+  center([{t:"choose your hull",c:"#3a5fb0",f:"15px 'Courier New',monospace",lh:0}],94);
+  ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
+
+  // ship gallery
+  const cardW=144,cardH=200,gap=12,total=SHIPS.length*cardW+(SHIPS.length-1)*gap,x0=(W-total)/2,y0=130;
+  shipRects=[];
+  SHIPS.forEach((s,i)=>{ const x=x0+i*(cardW+gap),y=y0,r={x,y,w:cardW,h:cardH,ship:s}; shipRects.push(r);
+    const owned=unlocked.includes(s.id),sel=selectedShip===s.id,afford=gold>=s.cost,hov=inside(mouse,r);
+    ctx.fillStyle=hov?"rgba(20,30,60,0.95)":"rgba(10,16,36,0.92)"; ctx.fillRect(x,y,cardW,cardH);
+    ctx.lineWidth=sel?3:2; ctx.strokeStyle=sel?s.color:owned?"#2a3a66":(afford?"#7a6a20":"#23283a"); ctx.strokeRect(x+1,y+1,cardW-2,cardH-2);
+    const sc=shipCanvas[s.id]; ctx.save(); if(!owned)ctx.globalAlpha=0.45; ctx.drawImage(sc.c,x+cardW/2-sc.w*0.8,y+22,sc.w*1.6,sc.h*1.6); ctx.restore();
+    ctx.textAlign="center"; ctx.fillStyle=owned?"#fff":"#6f7da0"; ctx.font="bold 15px 'Courier New',monospace"; ctx.fillText(s.name,x+cardW/2,y+96);
+    ctx.fillStyle=s.color; ctx.font="11px 'Courier New',monospace"; ctx.fillText(WDEF[s.weapon].name,x+cardW/2,y+114);
+    ctx.font="bold 13px 'Courier New',monospace";
+    if(sel){ ctx.fillStyle="#46e85a"; ctx.fillText("▶ SELECTED",x+cardW/2,y+cardH-16); }
+    else if(owned){ ctx.fillStyle="#9fc4ff"; ctx.fillText("SELECT",x+cardW/2,y+cardH-16); }
+    else { ctx.fillStyle=afford?"#ffd400":"#6b5a2a"; ctx.fillText((afford?"BUY ":"LOCKED ")+s.cost,x+cardW/2,y+cardH-16); } });
+
+  const sel=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
+  center([{t:"Launching as "+sel.name+" · starts with "+WDEF[sel.weapon].name,c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],360);
+  center([{t:"Smash asteroids for salvage · level up to draft weapons & passives · evolve them",c:"#3a5fb0",f:"13px 'Courier New',monospace",lh:0}],386);
+  center([{t:"BEST  "+fmtTime(bestTime),c:"#ff5ff0",f:"14px 'Courier New',monospace",lh:0}],414);
+  if(Math.floor(now/500)%2===0) center([{t:"PRESS SPACE / ENTER TO LAUNCH",c:"#fff",f:"bold 20px 'Courier New',monospace",lh:0,g:true}],470);
+  center([{t:"click a hull to select · buy locked hulls with gold",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],500);
+}
+function drawGameOver(){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H);
+  center([{t:"REACTOR BREACH",c:"#ff3b3b",f:"bold 46px 'Courier New',monospace",lh:58,g:true},
+    {t:"SURVIVED  "+fmtTime(gameTime),c:"#fff",f:"bold 24px 'Courier New',monospace",lh:34},
+    {t:"LEVEL "+player.level+"   ·   "+kills+" KILLS",c:"#ffd400",f:"16px 'Courier New',monospace",lh:30},
+    {t:"+ "+lastEarned+" GOLD   (total "+gold+")",c:"#ffe23d",f:"bold 16px 'Courier New',monospace",lh:30},
+    {t:(gameTime>=bestTime?"NEW BEST TIME!":"BEST  "+fmtTime(bestTime)),c:"#ff5ff0",f:"16px 'Courier New',monospace",lh:46}],H/2-100);
+  if(Math.floor(now/500)%2===0) center([{t:"PRESS SPACE / CLICK FOR HANGAR",c:"#54f0ff",f:"bold 18px 'Courier New',monospace",lh:0,g:true}],H/2+96); }
+
+function render(){ ctx.clearRect(0,0,W,H); ctx.fillStyle="#04050d"; ctx.fillRect(0,0,W,H); drawStars();
+  if(state!=="start"){ drawWorld(); drawHUD(); }
+  ctx.textAlign="center"; ctx.font="bold 16px 'Courier New',monospace";
+  for(const f of floats){ ctx.globalAlpha=clamp(f.life,0,1); ctx.fillStyle="#fff"; ctx.fillText(f.t,f.x,f.y); } ctx.globalAlpha=1;
+  if(state==="start") drawStart();
+  if(state==="levelup") drawLevelUp();
+  if(state==="paused"){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H); center([{t:"PAUSED",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:40,g:true},{t:"press P to resume",c:"#3a5fb0",f:"16px 'Courier New',monospace",lh:40}],H/2-10); }
+  if(state==="gameover") drawGameOver();
+}
+
+function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; update(dt); render(); requestAnimationFrame(loop); }
+requestAnimationFrame(ts=>{ last=ts; loop(ts); });
+</script>
+</body>
+</html>
