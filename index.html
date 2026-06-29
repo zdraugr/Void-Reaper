@@ -147,6 +147,7 @@ let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
 let bestTime = Store.get("vr_best",0);
 let runs = Store.get("vr_runs",[]);            // past-run history (most recent first)
+let meta = Store.get("vr_meta",{});            // permanent gold-bought perks: id -> level
 if(!unlocked.includes(selectedShip)) selectedShip="vanguard";
 let menu="main";                                // start-screen sub-panel: main|ships|settings|runs|upgrades
 let bossKills=0, resetArm=0;                     // bosses slain this run; reset-progress confirm timer
@@ -156,7 +157,7 @@ function saveOpt(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e)
 Sound.setVol(Store.get("vr_vol",0.45)); Sound.setMuted(Store.get("vr_mute",false));
 
 const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
-  weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1} };
+  weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0 };
 let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[];
 let spawnTimer=0, eliteTimer=0, asteroidTimer=0, bossTimer=0, bossCount=0;
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
@@ -165,13 +166,33 @@ for(let i=0;i<170;i++){ const L=i%3; stars.push({x:Math.random()*W,y:Math.random
 
 /* ---------------- stat getters ---------------- */
 const P=id=>player.passives[id]||0;
-const maxHP=()=>100+30*P("reactor");
-const moveSpeed=()=>175*(1+0.09*P("engine"));
-const dmgMult=()=>1+0.18*P("amp");
-const cdMult=()=>Math.max(0.40,1-0.09*P("coolant"));
-const magnetR=()=>78+30*P("magnet");
-const regen=()=>0.5*P("nanobots");
+const M=id=>meta[id]||0;   // permanent meta-perk level
+const maxHP=()=>100+30*P("reactor")+20*M("vitality");
+const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"));
+const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"));
+const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste")));
+const magnetR=()=>78+30*P("magnet")+20*M("magnet");
+const regen=()=>0.5*P("nanobots")+0.3*M("regen");
 const boostCdMax=()=>7-P("boost");
+const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor")));   // Armor perk reduces damage taken
+
+/* ---- meta-upgrade registry (permanent perks bought with gold) ---- */
+const STD=L=>500*2**L;   // standard perk cost: 500/1000/2000/4000/8000 (maxing one = 15,500)
+const META=[
+  {id:"might",    name:"Might",    max:5, cost:STD, desc:"+8% weapon damage"},
+  {id:"vitality", name:"Vitality", max:5, cost:STD, desc:"+20 max HP"},
+  {id:"armor",    name:"Armor",    max:5, cost:STD, desc:"-5% damage taken"},
+  {id:"haste",    name:"Haste",    max:5, cost:STD, desc:"-4% weapon cooldown"},
+  {id:"velocity", name:"Velocity", max:5, cost:STD, desc:"+1% move speed"},
+  {id:"magnet",   name:"Magnet",   max:5, cost:STD, desc:"+20 pickup range"},
+  {id:"regen",    name:"Regen",    max:5, cost:STD, desc:"+0.3 HP/sec"},
+  {id:"greed",    name:"Greed",    max:5, cost:STD, desc:"+10% gold per run"},
+  {id:"growth",   name:"Growth",   max:5, cost:STD, desc:"+5% XP gained"},
+  {id:"luck",     name:"Luck",     max:5, cost:STD, desc:"+heal/vacuum drop rate"},
+  {id:"revival",  name:"Revival",  max:1, cost:()=>40000, desc:"1 free revive per run"}
+];
+const metaCost=p=>p.cost(M(p.id));                       // gold to buy the next level
+const metaSpent=()=>META.reduce((s,p)=>{ let t=0; for(let L=0;L<M(p.id);L++)t+=p.cost(L); return s+t; },0);
 
 /* ============================================================================
    UPGRADE REGISTRY
@@ -310,7 +331,7 @@ function hurtEnemy(e,dmg){ if(e.dead)return; e.hp-=dmg; e.flash=0.07;
     else { kills++;
       particles.push(...burst(e.x,e.y,e.big?"#46e85a":e.spr==="moth"?"#ff3b3b":e.spr==="mite"?"#ff5ff0":"#ffd400",e.big?22:8));
       gems.push({x:e.x,y:e.y,val:e.val,vx:rand(-30,30),vy:rand(-30,30)});
-      if(e.big&&Math.random()<0.8) gems.push({x:e.x+rand(-14,14),y:e.y+rand(-14,14),val:e.val,vx:0,vy:0,heal:true});
+      if(e.big&&Math.random()<0.8+0.03*M("luck")) gems.push({x:e.x+rand(-14,14),y:e.y+rand(-14,14),val:e.val,vx:0,vy:0,heal:true});
       Sound.pop(); } } }
 function killBoss(e){ kills++; bossKills++;
   const n=28+Math.floor(gameTime/15);                       // big XP shower
@@ -322,8 +343,8 @@ function killBoss(e){ kills++; bossKills++;
 function dropAsteroid(e){
   const n=6+Math.floor(gameTime/30), v=1+Math.floor(gameTime/60);
   for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,160); gems.push({x:e.x,y:e.y,val:v,vx:Math.cos(a)*s,vy:Math.sin(a)*s}); }
-  if(Math.random()<0.25) gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});
-  if(Math.random()<0.10) gems.push({x:e.x,y:e.y,vacuum:true,val:0,vx:0,vy:0});
+  if(Math.random()<0.25+0.05*M("luck")) gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});
+  if(Math.random()<0.10+0.03*M("luck")) gems.push({x:e.x,y:e.y,vacuum:true,val:0,vx:0,vy:0});
   particles.push(...burst(e.x,e.y,"#9fa7bd",18)); fx.push({kind:"ring",x:e.x,y:e.y,r:34,life:0.25}); floatText("SALVAGE!");
 }
 function explodeAt(x,y,r,dmg){ for(const e of queryNear(x,y,r)){ const dx=e.x-x,dy=e.y-y; if(dx*dx+dy*dy<r*r) hurtEnemy(e,dmg); }
@@ -333,7 +354,7 @@ function burst(x,y,c,n){ const out=[]; for(let i=0;i<n;i++){ const a=rand(0,TAU)
 /* ============================================================================
    XP / LEVEL UP
    ============================================================================ */
-function gainXP(v){ player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
+function gainXP(v){ v*=(1+0.05*M("growth")); player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
   if(player.pendingLevels>0&&state==="playing") openLevelUp(); }
 let levelChoices=[];
 function buildChoices(){
@@ -388,7 +409,7 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
   if(e.code==="Backquote"&&!e.repeat){ DEV=!DEV;
     if(DEV){ floatText("DEV ON"); }
     else { devGod=false;  // leaving the sandbox: drop all cheats and reload the real, naturally-earned save
-      gold=Store.get("vr_gold",0); unlocked=Store.get("vr_ships",["vanguard"]); selectedShip=Store.get("vr_sel","vanguard"); bestTime=Store.get("vr_best",0); runs=Store.get("vr_runs",[]);
+      gold=Store.get("vr_gold",0); unlocked=Store.get("vr_ships",["vanguard"]); selectedShip=Store.get("vr_sel","vanguard"); bestTime=Store.get("vr_best",0); runs=Store.get("vr_runs",[]); meta=Store.get("vr_meta",{});
       if(!unlocked.includes(selectedShip)) selectedShip="vanguard"; floatText("DEV OFF — save restored"); } }
   if(DEV&&!e.repeat){
     if(e.code==="KeyG"){ gold+=1000; Store.set("vr_gold",gold); floatText("+1000 GOLD"); }
@@ -419,13 +440,19 @@ function floatText(t){ floats.push({t,x:W/2,y:H/2-40,life:1.4}); }
    ============================================================================ */
 function startGame(){
   const ship=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
-  player.x=0;player.y=0;player.hp=100;player.invuln=0;player.facing=-Math.PI/2;player.orbit=0;
+  player.x=0;player.y=0;player.invuln=0;player.facing=-Math.PI/2;player.orbit=0;
   player.level=1;player.xp=0;player.pendingLevels=0;player.ship=ship.id;player.boostCd=0;player.boosting=0;
   player.weapons=[{id:ship.weapon,base:ship.weapon,level:1,timer:0,evo:false}]; player.passives={};
+  player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];
   gameTime=0;kills=0;bossKills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
-function gameOver(){ state="gameover"; lastEarned=CONFIG.goldPerRun(gameTime,kills); gold+=lastEarned; Store.set("vr_gold",gold);
+function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
+    for(const en of enemies){ if(!en.asteroid&&!en.boss) en.dead=true; } ebullets.length=0;
+    particles.push(...burst(player.x,player.y,"#46e85a",30)); fx.push({kind:"ring",x:player.x,y:player.y,r:120,life:0.4}); shakeT=Math.max(shakeT,0.4);
+    floatText("REVIVED!  ("+player.revives+" left)"); Sound.evolve(); }
+  else { player.hp=0; gameOver(); } }
+function gameOver(){ state="gameover"; lastEarned=Math.floor(CONFIG.goldPerRun(gameTime,kills)*(1+0.1*M("greed"))); gold+=lastEarned; Store.set("vr_gold",gold);
   if(gameTime>bestTime){ bestTime=gameTime; Store.set("vr_best",bestTime); }
   runs.unshift({date:Date.now(),time:gameTime,kills,bosses:bossKills,ship:player.ship,level:player.level,gold:lastEarned});
   if(runs.length>20) runs.length=20; Store.set("vr_runs",runs);   // persists only when DEV is off (sandbox guard)
@@ -483,10 +510,10 @@ function update(dt){
 
   // contact damage (asteroids don't hurt you; devGod ignores all damage)
   if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+10;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=e.dmg; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0){ player.hp=0; gameOver(); } break; } } }
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg); player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // enemy bullets (boss + spitters) vs player (same i-frames as contact damage)
   if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+10;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=b.dmg; b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0){ player.hp=0; gameOver(); } break; } } }
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(b.dmg); b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
 
   // gems (magnet, pickup, vacuum)
   const mr=(gems.length>320?4000:magnetR());
@@ -709,10 +736,26 @@ function drawRuns(){
 }
 
 function drawUpgrades(){
-  center([{t:"UPGRADES",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
-  ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
-  center([{t:"Coming soon",c:"#9fc4ff",f:"20px 'Courier New',monospace",lh:0}],H/2-16);
-  center([{t:"Spend gold on permanent skills — next update",c:"#3a5fb0",f:"13px 'Courier New',monospace",lh:0}],H/2+12);
+  center([{t:"UPGRADES",c:"#54f0ff",f:"bold 28px 'Courier New',monospace",lh:0,g:true}],44);
+  ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,28);
+  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="12px 'Courier New',monospace"; ctx.fillText("permanent perks · apply every run",16,28);
+  const cols=4,cw=200,ch=96,gx=12,gy=14,total=cols*cw+(cols-1)*gx,x0=(W-total)/2,y0=66,iw=(cw-20)/1;
+  META.forEach((p,i)=>{ const col=i%cols,row=(i/cols)|0,x=x0+col*(cw+gx),y=y0+row*(ch+gy);
+    const lv=M(p.id),maxed=lv>=p.max,cost=metaCost(p),afford=gold>=cost,r={x,y,w:cw,h:ch},hov=inside(mouse,r);
+    r.on=()=>{ if(maxed){ floatText("MAXED"); return; } if(gold>=cost){ gold-=cost; meta[p.id]=lv+1; Store.set("vr_gold",gold); Store.set("vr_meta",meta); Sound.pick(); } else floatText("NOT ENOUGH GOLD"); };
+    uiRects.push(r);
+    ctx.fillStyle=hov?"rgba(20,30,60,0.95)":"rgba(10,16,36,0.92)"; ctx.fillRect(x,y,cw,ch);
+    ctx.lineWidth=2; ctx.strokeStyle=maxed?"#46e85a":(afford?"#7a6a20":"#23283a"); ctx.strokeRect(x+1,y+1,cw-2,ch-2);
+    ctx.textAlign="left"; ctx.fillStyle="#fff"; ctx.font="bold 14px 'Courier New',monospace"; ctx.fillText(p.name,x+10,y+22);
+    const pw=(cw-20)/p.max; for(let k=0;k<p.max;k++){ ctx.fillStyle=k<lv?"#54f0ff":"#2a3a55"; ctx.fillRect(x+10+k*pw,y+30,pw-3,7); }
+    ctx.fillStyle="#9fc4ff"; ctx.font="11px 'Courier New',monospace"; ctx.fillText(p.desc,x+10,y+56);
+    ctx.font="bold 12px 'Courier New',monospace";
+    if(maxed){ ctx.fillStyle="#46e85a"; ctx.fillText("MAX",x+10,y+80); }
+    else { ctx.fillStyle="#cfe"; ctx.fillText("Lv "+lv+"/"+p.max,x+10,y+80); ctx.textAlign="right"; ctx.fillStyle=afford?"#ffd400":"#6b5a2a"; ctx.fillText(cost+"g",x+cw-10,y+80); } });
+  const spent=metaSpent(),armed=resetArm>now;
+  panelBtn(armed?"CONFIRM REFUND  "+spent+"g":"REFUND ALL",W-236,H-48,212,32,()=>{
+    if(armed){ gold+=spent; meta={}; Store.set("vr_gold",gold); Store.set("vr_meta",meta); resetArm=0; floatText("REFUNDED "+spent+"g"); }
+    else if(spent>0) resetArm=now+2500; else floatText("nothing to refund"); },{color:armed?"#ff3b3b":"#4a5a2a",text:armed?"#ff7a7a":"#cc9",font:"bold 13px 'Courier New',monospace"});
   backBtn();
 }
 function drawGameOver(){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H);
