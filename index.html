@@ -189,6 +189,7 @@ let menu="main";                                // start-screen sub-panel: main|
 let runsPage=0, runsSort="recent";              // Past Runs paging (10/page) + sort: recent | best
 let pausePanel="root";                           // in-game pause menu: root | settings
 let bossKills=0, resetArm=0;                     // bosses slain this run; reset-progress confirm timer
+let firstBossKill=0;                             // gameTime of the first boss kill (0 = none yet); gates+ramps spitters
 let shakeEnabled = Store.get("vr_shake",true);   // settings: camera shake on/off
 // settings that aren't "progress" persist even while DEV sandbox is on (bypass the Store DEV-guard)
 function saveOpt(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
@@ -390,7 +391,7 @@ function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=T
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
   const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(35+Math.min(gameTime,360)*0.18);
   enemies.push({asteroid:true,spr:"asteroid",x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:0,val:0,dmg:0,r:20,big:false,flash:0,dead:false}); }
-function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0],["spitter",t>60?Math.min(2.5,(t-60)*0.015):0],["bomber",t>70?Math.min(8,(t-70)*0.05):0]];
+function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0],["spitter",firstBossKill?Math.min(2.5,(t-firstBossKill)/120*2.5):0],["bomber",t>70?Math.min(8,(t-70)*0.05):0]];
   let sum=0; for(const w of wts)sum+=w[1]; let r=Math.random()*sum; for(const w of wts){ r-=w[1]; if(r<=0)return w[0]; } return "bee"; }
 // real boss: wipes the swarm (no drops), then arrives. Escalates by boss number n:
 //   n1 = bruiser + adds · n2 = bruiser + bullet patterns · n3+ = both, each tougher.
@@ -437,7 +438,7 @@ function hurtEnemy(e,dmg){ if(e.dead)return; e.hp-=dmg; e.flash=0.07;
       if(e.bounty) claimBounty(e);
       if(e.shatter){ e.shatter=false; explodeAt(e.x,e.y,70,40); }   // Absolute Zero: frozen foes burst (bounded — hurtEnemy guards re-entry)
       Sound.pop(); } } }
-function killBoss(e){ kills++; bossKills++;
+function killBoss(e){ kills++; bossKills++; if(!firstBossKill)firstBossKill=gameTime;
   const n=28+Math.floor(gameTime/15);                       // big XP shower
   for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,210); gems.push({x:e.x,y:e.y,val:3,vx:Math.cos(a)*s,vy:Math.sin(a)*s}); }
   gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});        // guaranteed heal
@@ -609,7 +610,7 @@ function startGame(){
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality + ship hp), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];mines=[];
   planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;astKills=0;obstacles=[]; ensurePlanets();
-  gameTime=0;kills=0;bossKills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
+  gameTime=0;kills=0;bossKills=0;firstBossKill=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
     for(const en of enemies){ if(!en.asteroid&&!en.boss) en.dead=true; } ebullets.length=0;
