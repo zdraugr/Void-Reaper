@@ -43,6 +43,7 @@
 const CONFIG = {
   MAX_WEAPONS: 5, MAX_PASSIVES: 5, CHOICES: 3,
   ENEMY_CAP: 240, DESPAWN_DIST: 1700, PLAYER_R: 7,   // PLAYER_R = player collision pad added to enemy/bullet radius
+  SPAWN_GAP: 0.9,   // half-width (radians) of the rotating no-spawn arc — the swarm's escape lane
   xpNeed: lv => Math.floor(4 + lv*3 + lv*lv*1.2),   // ~30% faster leveling to offset the doubled kill-times
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
   spawnBatch:    t => 1 + Math.floor(t/30),
@@ -404,9 +405,11 @@ const ELITES=[
   {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55},
   {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,postBoss:true} ];
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
-function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
+// spawn ring with a slowly-rotating gap so the swarm is never a closed circle (escape lane)
+function spawnAngle(){ const g=now*0.0006; return g + CONFIG.SPAWN_GAP + rand(0, TAU - 2*CONFIG.SPAWN_GAP); }
+function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
-function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime));   // staggered radius so waves arrive spread out, not as a closing ring
+function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime));   // staggered radius so waves arrive spread out, not as a closing ring
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?6:3))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -664,7 +667,7 @@ function ensurePlanets(){ planets=planets.filter(p=>quests.some(q=>q.dest===p)||
   let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3850)near++; }
   let g=0; while(near<2&&g++<8){ spawnPlanet(); near++; } }
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
-function openQuestOffer(p){ const types=["cargo","bounty","purge","salvage"],type=types[Math.random()*types.length|0],need=CONFIG.xpNeed(player.level);
+function openQuestOffer(p){ const types=gameTime<120?["cargo","purge","salvage"]:["cargo","bounty","purge","salvage"],type=types[Math.random()*types.length|0],need=CONFIG.xpNeed(player.level);   // bounty gated until 2:00
   const q={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?500:350};
   if(type==="purge")q.count=15+player.level*2;
   if(type==="salvage")q.count=6+Math.floor(player.level/2);
