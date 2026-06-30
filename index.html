@@ -485,7 +485,7 @@ function buildChoices(){
   const evo=pool.find(c=>c.kind==="evolve"); let out=pool.slice(0,CONFIG.CHOICES);
   if(evo&&!out.includes(evo)) out[CONFIG.CHOICES-1]=evo;
   while(out.length<CONFIG.CHOICES) out.push({kind:"heal"});
-  const cardW=200,cardH=270,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
+  const cardW=260,cardH=264,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
   out.forEach((c,i)=>{ c.rect={x:x0+i*(cardW+gap),y:y0,w:cardW,h:cardH};
     if(c.kind==="wnew"){ const d=WDEF[c.id]; c.title=d.name;c.tag="NEW WEAPON";c.color=d.color;c.text=d.desc; }
     else if(c.kind==="wup"){ const d=WDEF[c.id]; c.title=d.name;c.tag="Lv "+(getWeapon(c.base).level+1);c.color=d.color;c.text=d.desc; }
