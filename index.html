@@ -331,16 +331,17 @@ function fireWeapons(dt){
       case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
-      case "laser": { const range=evo?460:340+30*lv, width=evo?16:9+1.5*lv, dmg=(evo?22:7+4*lv)*dmgMult(),
+      case "laser": { const range=evo?460:340+30*lv, width=evo?16:9+1.5*lv, base=(evo?22:7+4*lv),
           dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?3.6:3.0-0.12*lv)*cdMult();   // cd>dur leaves a gap between beams (Eclipse: between sweeps)
         if((w.beamT||0)>0){ w.beamT-=dt;
           if(evo){ w.beamAng=(w.beamAng||0)+(TAU/dur)*dt; }                                      // sweep one full circle over the duration
           else { const t=nearest(player.x,player.y,range); if(t){ const ta=Math.atan2(t.y-player.y,t.x-player.x); let da=ta-w.beamAng; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU; w.beamAng+=clamp(da,-6*dt,6*dt); } }
-          w.tickT=(w.tickT||0)-dt; if(w.tickT<=0){ w.tickT=0.1; beamHit(player.x,player.y,w.beamAng,range,width,dmg); } }
+          w.tickT=(w.tickT||0)-dt; if(w.tickT<=0){ w.tickT=0.1; const ramp=clamp((dur-w.beamT)/dur,0,1);   // low on ignition, ramps to ~1.65x by end of the beam
+            beamHit(player.x,player.y,w.beamAng,range,width,base*(0.35+1.3*ramp)*dmgMult()); } }
         else if(w.timer<=0){ w.timer=cd; w.beamT=dur; w.tickT=0;
           const t=nearest(player.x,player.y,range); w.beamAng=evo?(w.beamAng||0):(t?Math.atan2(t.y-player.y,t.x-player.x):player.facing); Sound.beam(); } } break;
-      case "cryo": if(w.timer<=0){ w.timer=0.3; const R=evo?170:90+18*lv, R2=R*R, dmg=(evo?10:3+2*lv)*dmgMult(), slowT=(evo?1.4:0.9)+0.08*P("cryocoil");
-        for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2){ e.chill=slowT; if(evo)e.shatter=true; hurtEnemy(e,dmg); } } } break;
+      case "cryo": if(w.timer<=0){ w.timer=0.3; const R=evo?170:90+18*lv, R2=R*R, slowT=(evo?1.4:0.9)+0.08*P("cryocoil");   // pure control: slows only, no damage (Absolute Zero's shatter still fires on death)
+        for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2){ e.chill=slowT; if(evo)e.shatter=true; } } } break;
       case "mines": if(w.timer<=0){ w.timer=(evo?1.0:2.2-0.18*lv)*cdMult();
         if(mines.length<40) mines.push({x:player.x,y:player.y,arm:46,blast:evo?92:54+6*lv,dmg:(evo?42:16+8*lv)*dmgMult(),life:14,t:0,chain:evo}); } break;
       case "chargerail": if(w.timer<=0){ const range=evo?1100:850, dmg=(evo?260:90+45*lv)*dmgMult(), pierce=evo?99:6+lv;
@@ -364,10 +365,10 @@ function fireWeapons(dt){
 /* ============================================================================
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
-const TYPES={ mite:{spr:"mite",hp:2,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:4,sp:80,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:9,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:26,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
-  spitter:{spr:"spitter",hp:10,sp:64,val:4,dmg:7,r:14},
-  bomber:{spr:"bomber",hp:6,sp:140,val:3,dmg:0,r:11} };
+const TYPES={ mite:{spr:"mite",hp:18,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:22,sp:80,val:1,dmg:7,r:14},
+  moth:{spr:"moth",hp:32,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:56,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
+  spitter:{spr:"spitter",hp:26,sp:64,val:4,dmg:7,r:14},
+  bomber:{spr:"bomber",hp:18,sp:140,val:3,dmg:0,r:11} };
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -732,13 +733,13 @@ function update(dt){
     if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(11); player.invuln=now+200; shakeT=Math.max(shakeT,0.2); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
 
   // gems (magnet, pickup, vacuum)
-  const mr=(gems.length>320?4000:magnetR());
+  const mr=magnetR(), overflow=gems.length>500;   // ponytail: release valve — when gems pile up, bank distant ones silently instead of yanking the whole field toward the player
   for(const g of gems){ const dx=player.x-g.x,dy=player.y-g.y,d=Math.hypot(dx,dy)||1;
     g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.86; g.vy*=0.86;                       // brief spawn scatter, settles fast
-    if(g.pulled){ g.x+=dx/d*900*dt; g.y+=dy/d*900*dt; }                        // vacuum drop: streams this gem to the player
-    else if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
+    if(overflow&&d>mr){ if(g.heal)player.hp=Math.min(maxHP(),player.hp+25); else if(!g.vacuum)gainXP(g.val); g.got=true; continue; }
+    if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
     if(d<16){ g.got=true;
-      if(g.vacuum){ for(const o of gems){ if(o===g||o.got)continue; const ox=o.x-player.x,oy=o.y-player.y; if(ox*ox+oy*oy<1000*1000) o.pulled=true; } floatText("VACUUM!"); Sound.pick(); }   // flag all XP within 1000 to stream in (collected on arrival)
+      if(g.vacuum){ let tot=0; for(const o of gems){ if(o===g||o.got)continue; if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val; o.got=true; } gainXP(tot); floatText("VACUUM!"); Sound.pick(); }   // instant grab of all field XP
       else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+25); floatText("+25 HP"); }
       else { gainXP(g.val); Sound.pick(); } } }
   gems=gems.filter(g=>!g.got);
