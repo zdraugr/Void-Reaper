@@ -215,7 +215,7 @@ const maxHP=()=>(100+30*P("reactor")+20*M("vitality")+25*P("cryocoil"))*(player.
 const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"))*(1+0.07*P("gyro"))*(player.spdMul||1);
 const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"))*(1+0.15*P("payload"))*(1+0.15*P("targeting"));
 const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste"))*(1-0.07*P("capacitor")));
-const magnetR=()=>78+30*P("magnet")+20*M("magnet");
+const magnetR=()=>86+30*P("magnet")+20*M("magnet");
 const regen=()=>0.5*P("nanobots")+0.3*M("regen");
 const maxWeapons=()=>CONFIG.MAX_WEAPONS+M("expansion");   // Expansion Bay perk: +1 weapon & passive slot
 const maxPassives=()=>CONFIG.MAX_PASSIVES+M("expansion");
@@ -303,8 +303,8 @@ function kNearest(x,y,k,maxR){ const list=[],r2=maxR*maxR;
   list.sort((a,b)=>a[0]-b[0]); return list.slice(0,k).map(p=>p[1]); }
 function spawnShot(o){ if(shots.length<500) shots.push(o); }
 function droneParams(){ const w=getWeapon("drones"); if(!w)return null;
-  if(w.evo)return {count:8,R:112,r:16,dmg:24*dmgMult(),tick:0.12};
-  const lv=w.level; return {count:1+lv,R:54+6*lv,r:12,dmg:(11+5*lv)*dmgMult(),tick:0.16}; }
+  if(w.evo)return {count:8,R:112,r:16,dmg:26*dmgMult(),tick:0.12};
+  const lv=w.level; return {count:1+lv,R:54+6*lv,r:12,dmg:(12+5.5*lv)*dmgMult(),tick:0.16}; }
 function auraInfo(){ const w=getWeapon("aura"); if(!w)return null;
   if(w.evo)return {R:140,dmg:20*dmgMult(),tick:0.25,pull:true};
   const lv=w.level; return {R:70+13*lv,dmg:(4+3*lv)*dmgMult(),tick:0.35,pull:false}; }
@@ -331,7 +331,7 @@ function fireWeapons(dt){
         for(let i=0;i<count;i++){ const a=rand(0,TAU),t=ts[i]||nearest(player.x,player.y,950); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*120,vy:Math.sin(a)*120,dmg,pierce:0,r:6,life:3,color:"#ff9a00",kind:"missile",target:t,blast}); } Sound.missile();
       } break;
       case "lightning": if(w.timer<=0){
-        let n,dmg,cd; if(evo){n=10;dmg=34*dmgMult();cd=0.8;} else {n=2+lv;dmg=(13+7*lv)*dmgMult();cd=1.45;}
+        let n,dmg,cd; if(evo){n=10;dmg=39*dmgMult();cd=0.8;} else {n=2+lv;dmg=(15+8*lv)*dmgMult();cd=1.45;}
         w.timer=cd*cdMult(); const tg=kNearest(player.x,player.y,n,600); let from={x:player.x,y:player.y};
         for(const e of tg){ fx.push({kind:"arc",x1:from.x,y1:from.y,x2:e.x,y2:e.y,life:0.18}); hurtEnemy(e,dmg); from=e; } if(tg.length)Sound.zap();
       } break;
