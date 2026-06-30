@@ -200,7 +200,7 @@ const maxHP=()=>100+30*P("reactor")+20*M("vitality");
 const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"));
 const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"));
 const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste")));
-const magnetR=()=>1000+60*P("magnet")+40*M("magnet");   // pulls essentially all on-screen XP in
+const magnetR=()=>78+30*P("magnet")+20*M("magnet");
 const regen=()=>0.5*P("nanobots")+0.3*M("regen");
 const boostCdMax=()=>7-P("boost");
 const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor")));   // Armor perk reduces damage taken
@@ -673,9 +673,10 @@ function update(dt){
   const mr=(gems.length>320?4000:magnetR());
   for(const g of gems){ const dx=player.x-g.x,dy=player.y-g.y,d=Math.hypot(dx,dy)||1;
     g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.86; g.vy*=0.86;                       // brief spawn scatter, settles fast
-    if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
+    if(g.pulled){ g.x+=dx/d*900*dt; g.y+=dy/d*900*dt; }                        // vacuum drop: streams this gem to the player
+    else if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
     if(d<16){ g.got=true;
-      if(g.vacuum){ let tot=0; for(const o of gems){ if(o===g||o.got)continue; if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val; o.got=true; } gainXP(tot); floatText("VACUUM!"); Sound.pick(); }
+      if(g.vacuum){ for(const o of gems){ if(o===g||o.got)continue; const ox=o.x-player.x,oy=o.y-player.y; if(ox*ox+oy*oy<1000*1000) o.pulled=true; } floatText("VACUUM!"); Sound.pick(); }   // flag all XP within 1000 to stream in (collected on arrival)
       else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+25); floatText("+25 HP"); }
       else { gainXP(g.val); Sound.pick(); } } }
   gems=gems.filter(g=>!g.got);
