@@ -43,14 +43,14 @@
 const CONFIG = {
   MAX_WEAPONS: 5, MAX_PASSIVES: 4, CHOICES: 3,
   ENEMY_CAP: 240, DESPAWN_DIST: 1700,
-  xpNeed: lv => Math.floor(5 + lv*4 + lv*lv*2.0),
-  spawnInterval: t => Math.max(0.22, 0.95 - t*0.004),
-  spawnBatch:    t => 1 + Math.floor(t/40),
+  xpNeed: lv => Math.floor(5 + lv*4 + lv*lv*1.7),
+  spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
+  spawnBatch:    t => 1 + Math.floor(t/30),
   hpScale:       t => 1 + Math.min(t,420)*0.010,
   eliteEvery: 55, eliteAfter: 30,
   BOSS_FIRST: 300, BOSS_EVERY: 300,               // first boss at 5:00, then every 5 min
-  bossHp:  n => Math.round(1500 * Math.pow(1.6, n-1)),  // n = boss number (1,2,3...)
-  bossDmg: n => 24 + 6*n,
+  bossHp:  n => Math.round(1500 * Math.pow(1.7, n-1)),  // n = boss number (1,2,3...)
+  bossDmg: n => 24 + 9*n,
   BOOST_SPEED: 880, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME
   goldPerRun: (t,k) => Math.floor(t + k*0.4)      // gold earned at death
 };
@@ -82,7 +82,8 @@ const SPR = {
   bee:[ "...333...","..33333..",".3353533.","333333333",".3333333.","..33333..","...333..." ],
   moth:[ "...22.22...","..2222222..",".227272722.","22277777222","22275757222",".227777722.","..2272722..","...2.7.2..." ],
   boss:[ "......5......",".....777.....","..7..777..7..","7777.777.7777","7777777777777","7772757572777","7777555557777",".77777777777.","..777.7.777..","..6..7.7..6.." ],
-  asteroid:[ "...99990...","..9999990..",".999959990.","99999999900","99999999990","09999999990","09999999900",".099999900..","..0999900..","...00000..." ]
+  asteroid:[ "...99990...","..9999990..",".999959990.","99999999900","99999999990","09999999990","09999999900",".099999900..","..0999900..","...00000..." ],
+  drone:[ "..1..",".111.","11111","1.1.1" ]
 };
 const CACHE={}, shipCanvas={};
 function bake(grid,scale,whiteOnly,remap){
@@ -94,6 +95,7 @@ function bake(grid,scale,whiteOnly,remap){
 }
 function cacheSprite(n,g,s){ CACHE[n]={c:bake(g,s,false),cw:bake(g,s,true),w:g[0].length*s,h:g.length*s}; }
 ["player","mite","bee","moth","boss","asteroid"].forEach(n=>cacheSprite(n,SPR[n],4));
+const droneImg=bake(SPR.drone,3,false,{"1":"#46e85a"});   // baked once; blitted per drone (see drawWorld)
 cacheSprite("elite",SPR.boss,8);
 // spitter: recolored moth (cyan) — a ranged enemy; no new pixel grid needed
 CACHE.spitter={c:bake(SPR.moth,4,false,{"2":"#54f0ff","8":"#bff6ff"}),cw:bake(SPR.moth,4,true),w:SPR.moth[0].length*4,h:SPR.moth.length*4};
@@ -125,23 +127,25 @@ const SHIP_SPR={
 for(const s of SHIPS){ const c=bake(SHIP_SPR[s.id]||SPR.player,4,false,{"1":s.color}); shipCanvas[s.id]={c,w:c.width,h:c.height}; }
 
 /* ---------------- sound ---------------- */
-const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,bgm=null; const thr={},sfxBuf={};
-  function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=musicVol; bgm.muted=muted; bgm.play().catch(()=>{}); }
+const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,masterVol=1,bgm=null; const thr={},sfxBuf={};
+  function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=musicVol*masterVol; bgm.muted=muted; bgm.play().catch(()=>{}); }
   function loadSfx(){ for(const n of ["destroy","destroyboss","levelup","takedamage"])   // decode mp3 SFX into buffers, routed through master
     fetch("sfx/"+n+".mp3").then(r=>r.arrayBuffer()).then(b=>ac.decodeAudioData(b)).then(buf=>{ sfxBuf[n]=buf; }).catch(()=>{}); }
   function playBuf(n,v){ if(!ac||muted||!sfxBuf[n])return false; const s=ac.createBufferSource(); s.buffer=sfxBuf[n]; const g=ac.createGain(); g.gain.value=v==null?0.8:v; s.connect(g); g.connect(master); s.start(); return true; }
-  function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=vol; master.connect(ac.destination);
+  function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=vol*masterVol; master.connect(ac.destination);
     const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; startMusic(); loadSfx(); }
   function resume(){ if(ac&&ac.state==="suspended")ac.resume(); if(bgm&&bgm.paused&&!muted)bgm.play().catch(()=>{}); } const t=()=>ac.currentTime;
   function tone(f,d,ty,v,sl){ if(!ac||muted)return; const o=ac.createOscillator(),g=ac.createGain(); o.type=ty; o.frequency.setValueAtTime(f,t()); if(sl)o.frequency.exponentialRampToValueAtTime(sl,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); o.connect(g); g.connect(master); o.start(); o.stop(t()+d); }
   function noise(d,v,cut){ if(!ac||muted)return; const s=ac.createBufferSource(); s.buffer=nbuf; const g=ac.createGain(),f=ac.createBiquadFilter(); f.type="lowpass"; f.frequency.setValueAtTime(cut,t()); f.frequency.exponentialRampToValueAtTime(120,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(t()+d); }
   function gate(k,ms){ const n=performance.now(); if((thr[k]||0)>n)return false; thr[k]=n+ms; return true; }
   return { init,resume, toggle(){muted=!muted;if(bgm)bgm.muted=muted;return muted;},
-    setVol(v){ vol=clamp(v,0,1); if(master)master.gain.value=vol; }, getVol(){ return vol; },
-    setMusicVol(v){ musicVol=clamp(v,0,1); if(bgm)bgm.volume=musicVol; }, getMusicVol(){ return musicVol; },
+    setVol(v){ vol=clamp(v,0,1); if(master)master.gain.value=vol*masterVol; }, getVol(){ return vol; },
+    setMusicVol(v){ musicVol=clamp(v,0,1); if(bgm)bgm.volume=musicVol*masterVol; }, getMusicVol(){ return musicVol; },
+    setMaster(v){ masterVol=clamp(v,0,1); if(master)master.gain.value=vol*masterVol; if(bgm)bgm.volume=musicVol*masterVol; }, getMaster(){ return masterVol; },
     setMuted(m){ muted=!!m; if(bgm)bgm.muted=muted; }, isMuted(){ return muted; },
     shoot(){ if(gate("s",55))tone(880,.07,"square",.10,300); },
-    pop(){ if(gate("p",45)){ if(!playBuf("destroy",0.65))noise(.08,.18,1600); } },   // enemy destroyed
+    scatter(){ if(gate("sc",60))noise(.06,.13,2800); },
+    pop(){ if(gate("p",150)){ if(!playBuf("destroy",0.5))noise(.08,.18,1600); } },   // enemy destroyed (throttled — many die at once)
     pick(){ if(gate("g",40))tone(1200,.05,"square",.06,1700); },
     zap(){ tone(300,.12,"sawtooth",.12,1400); noise(.10,.15,3000); },
     missile(){ noise(.18,.16,1200); tone(140,.2,"sawtooth",.08,40); },
@@ -173,7 +177,7 @@ let bossKills=0, resetArm=0;                     // bosses slain this run; reset
 let shakeEnabled = Store.get("vr_shake",true);   // settings: camera shake on/off
 // settings that aren't "progress" persist even while DEV sandbox is on (bypass the Store DEV-guard)
 function saveOpt(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
-Sound.setVol(Store.get("vr_vol",0.45)); Sound.setMusicVol(Store.get("vr_musicvol",0.4)); Sound.setMuted(Store.get("vr_mute",false));
+Sound.setMaster(Store.get("vr_master",1)); Sound.setVol(Store.get("vr_vol",0.45)); Sound.setMusicVol(Store.get("vr_musicvol",0.4)); Sound.setMuted(Store.get("vr_mute",false));
 
 const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0 };
@@ -181,7 +185,7 @@ let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[];
 let spawnTimer=0, eliteTimer=0, asteroidTimer=0, bossTimer=0, bossCount=0;
 let planets=[], quest=null, questOffer=null, questCooldown=0, questOnPlanet=null;   // quests & planets
 let obstacles=[];                              // non-mineable hazard belts
-let rerolls=0, questsDone=0, rerollRect=null;  // level-up rerolls earned every 5 quests
+let rerolls=0, questsDone=0, rerollRect=null, astKills=0;  // level-up rerolls earned every 5 quests; astKills tracks asteroids broken (salvage quests)
 let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
 let padMoveX=0,padMoveY=0,padPrev={},padConnected=false,navIdx=0,prevState="";   // gamepad state + menu focus
@@ -196,7 +200,7 @@ const maxHP=()=>100+30*P("reactor")+20*M("vitality");
 const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"));
 const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"));
 const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste")));
-const magnetR=()=>78+30*P("magnet")+20*M("magnet");
+const magnetR=()=>1000+60*P("magnet")+40*M("magnet");   // pulls essentially all on-screen XP in
 const regen=()=>0.5*P("nanobots")+0.3*M("regen");
 const boostCdMax=()=>7-P("boost");
 const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor")));   // Armor perk reduces damage taken
@@ -229,14 +233,16 @@ const WDEF={
   scatter:{name:"Scattershot",max:5,color:"#ffd400",desc:"Pellets scatter outward in every direction.",evoReq:"engine",evoId:"nova"},
   missiles:{name:"Seeker Pods",max:5,color:"#ff9a00",desc:"Homing missiles that detonate on impact.",evoReq:"amp",evoId:"hunter"},
   lightning:{name:"Arc Coil",max:5,color:"#bff6ff",desc:"Chains lightning to nearby enemies.",evoReq:"nanobots",evoId:"tempest"},
+  pulse:{name:"Pulse Wave",max:5,color:"#7CFFEA",desc:"Emits a shockwave that blasts everything around you.",evoReq:"boost",evoId:"quake"},
   railgun:{name:"Rail Lance",color:"#bff6ff",desc:"A piercing rail bolt that runs the whole swarm through.",evolved:true},
   halo:{name:"Halo Swarm",color:"#46e85a",desc:"Eight heavy drones in a wide, lethal ring.",evolved:true},
   singularity:{name:"Singularity",color:"#ff5ff0",desc:"A vast field that drags foes in and melts them.",evolved:true},
   nova:{name:"Nova Burst",color:"#ffd400",desc:"Twin piercing rings sweep outward in every direction.",evolved:true},
   hunter:{name:"Hunter Swarm",color:"#ff9a00",desc:"A volley of seekers with bigger blasts.",evolved:true},
-  tempest:{name:"Tempest",color:"#bff6ff",desc:"Lightning forks across the entire mob.",evolved:true}
+  tempest:{name:"Tempest",color:"#bff6ff",desc:"Lightning forks across the entire mob.",evolved:true},
+  quake:{name:"Quake Pulse",color:"#7CFFEA",desc:"A massive shockwave levels everything around you.",evolved:true}
 };
-const BASE_WEAPONS=["blaster","drones","aura","scatter","missiles","lightning"];
+const BASE_WEAPONS=["blaster","drones","aura","scatter","missiles","lightning","pulse"];
 const PDEF={
   engine:{name:"Ion Thrusters",max:5,color:"#54f0ff",desc:"+9% movement speed."},
   amp:{name:"Damage Amp",max:5,color:"#ff3b3b",desc:"+18% weapon damage."},
@@ -246,7 +252,7 @@ const PDEF={
   nanobots:{name:"Nanobots",max:5,color:"#ffd400",desc:"Regenerates HP over time."},
   boost:{name:"Afterburner",max:5,color:"#bff6ff",desc:"Tap SPACE to dash forward with brief i-frames. Levels cut the cooldown."}
 };
-const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning"};
+const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning",quake:"pulse"};
 const getWeapon=base=>player.weapons.find(w=>w.base===base);
 
 /* ============================================================================
@@ -278,9 +284,9 @@ function fireWeapons(dt){
       case "scatter": if(w.timer<=0){
         if(evo){ w.timer=0.7*cdMult(); const dmg=18*dmgMult(),off=rand(0,TAU);  // twin piercing rings, expanding double wave
           for(let ring=0;ring<2;ring++){ const sp=ring?520:360,half=ring?TAU/32:0;
-            for(let i=0;i<16;i++){ const a=off+half+i/16*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg,pierce:4,r:7,life:1.0,color:"#ffd400",kind:"bolt"}); } } Sound.shoot(); }
+            for(let i=0;i<16;i++){ const a=off+half+i/16*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,dmg,pierce:4,r:7,life:1.0,color:"#ffd400",kind:"bolt"}); } } Sound.scatter(); }
         else { w.timer=1.25*cdMult(); const pel=5+lv,off=rand(0,TAU),dmg=(5+3*lv)*dmgMult();  // 360° ring around the ship
-          for(let i=0;i<pel;i++){ const a=off+i/pel*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.6,color:"#ffd400",kind:"bolt"}); } Sound.shoot(); }
+          for(let i=0;i<pel;i++){ const a=off+i/pel*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.6,color:"#ffd400",kind:"bolt"}); } Sound.scatter(); }
       } break;
       case "missiles": if(w.timer<=0){
         let count,dmg,blast,cd; if(evo){count=6;dmg=38*dmgMult();blast=52;cd=0.9;} else {count=1+Math.floor(lv/2);dmg=(14+7*lv)*dmgMult();blast=36;cd=1.5;}
@@ -295,6 +301,12 @@ function fireWeapons(dt){
       case "aura": { const ai=auraInfo(); if(w.timer<=0){ w.timer=ai.tick;
         for(const e of enemies){ if(e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y,d2=dx*dx+dy*dy;
           if(d2<ai.R*ai.R){ hurtEnemy(e,ai.dmg); if(ai.pull&&!e.asteroid){ const d=Math.sqrt(d2)||1,m=Math.min(d*0.12,14); e.x-=dx/d*m; e.y-=dy/d*m; } } } } } break;
+      case "pulse": if(w.timer<=0){
+        let R,dmg,cd; if(evo){R=320;dmg=30*dmgMult();cd=1.1;} else {R=120+30*lv;dmg=(8+5*lv)*dmgMult();cd=1.8;}
+        w.timer=cd*cdMult(); const R2=R*R;
+        for(const e of enemies){ if(e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2) hurtEnemy(e,dmg); }
+        fx.push({kind:"ring",x:player.x,y:player.y,r:R,life:0.4}); Sound.crack();
+      } break;
       case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
@@ -340,7 +352,7 @@ function separate(){ for(const e of enemies){ if(e.dead||e.asteroid||e.boss)cont
 function bossActions(dt){ for(const e of enemies){ if(!e.boss||e.dead)continue;
   if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=3.5; const c=2+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
   if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=2;
-    const m=8+2*bossCount,sp=160,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
+    const m=8+3*bossCount,sp=190,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
     for(let i=0;i<m;i++){ const a=off+i/m*TAU; ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:7,dmg:bd,life:5}); }
     Sound.zap(); } } } }
 // enemy bullets travel, expire, and are culled far from the player (mirrors the player-shot cull)
@@ -368,6 +380,7 @@ function killBoss(e){ kills++; bossKills++;
   particles.push(...burst(e.x,e.y,"#ffd400",40)); fx.push({kind:"ring",x:e.x,y:e.y,r:90,life:0.4});
   shakeT=Math.max(shakeT,0.5); floatText("BOSS DOWN"); Sound.bossDie(); }
 function dropAsteroid(e){
+  astKills++;
   const n=6+Math.floor(gameTime/30), v=1+Math.floor(gameTime/60);
   for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,160); gems.push({x:e.x,y:e.y,val:v,vx:Math.cos(a)*s,vy:Math.sin(a)*s}); }
   if(Math.random()<0.25+0.05*M("luck")) gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});
@@ -453,6 +466,11 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
       if(e.code==="KeyV"){ devGod=!devGod; floatText(devGod?"GOD ON":"GOD OFF"); }
       if(e.code==="KeyT"){ gameTime+=60; floatText("+60s"); }
       if(e.code==="KeyX"){ for(const en of enemies){ if(!en.asteroid&&!en.dead) hurtEnemy(en,1e9); } floatText("KILL ALL"); }
+      if(e.code==="KeyK"){ // fill weapon slots, max + evolve all, grant every passive
+        for(const id of BASE_WEAPONS){ if(player.weapons.length>=CONFIG.MAX_WEAPONS)break; if(!getWeapon(id))player.weapons.push({id,base:id,level:1,timer:0,evo:false}); }
+        for(const id in PDEF) player.passives[id]=PDEF[id].max;
+        for(const w of player.weapons){ const D=WDEF[w.base]; w.level=D.max; if(D.evoId){ w.id=D.evoId; w.evo=true; w.timer=0; } }
+        floatText("DEV: WEAPONS EVOLVED"); }
     }
   }
 },{passive:false});
@@ -512,7 +530,7 @@ function startGame(){
   player.weapons=[{id:ship.weapon,base:ship.weapon,level:1,timer:0,evo:false}]; player.passives={};
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];
-  planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;obstacles=[]; ensurePlanets();
+  planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;astKills=0;obstacles=[]; ensurePlanets();
   gameTime=0;kills=0;bossKills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
@@ -540,8 +558,11 @@ function ensurePlanets(){ planets=planets.filter(p=>(quest&&p===quest.dest)||Mat
   let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3500)near++; }
   let g=0; while(near<2&&g++<8){ spawnPlanet(); near++; } }
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
-function openQuestOffer(p){ const type=Math.random()<0.5?"cargo":"bounty",need=CONFIG.xpNeed(player.level);
-  questOffer={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?500:350}; state="quest"; Sound.pick(); }
+function openQuestOffer(p){ const types=["cargo","bounty","purge","salvage"],type=types[Math.random()*types.length|0],need=CONFIG.xpNeed(player.level);
+  const q={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?500:350};
+  if(type==="purge")q.count=15+player.level*2;
+  if(type==="salvage")q.count=6+Math.floor(player.level/2);
+  questOffer=q; state="quest"; Sound.pick(); }
 function spawnBountyTarget(){ spawnEnemy("elite"); const t=enemies[enemies.length-1];
   if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1400,2000); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
     t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
@@ -550,7 +571,9 @@ function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.pla
   if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9000,11000),                            // ~1 minute's flight at base speed
       dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false};
     planets.push(dest); quest={type:"cargo",dest,xp:o.xp,gold:o.gold}; toast("CARGO ACCEPTED → "+dest.name,"#ffd400"); }
-  else { const t=spawnBountyTarget(); quest={type:"bounty",target:t,xp:o.xp,gold:o.gold}; toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
+  else if(o.type==="bounty"){ const t=spawnBountyTarget(); quest={type:"bounty",target:t,xp:o.xp,gold:o.gold}; toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
+  else if(o.type==="purge"){ quest={type:"purge",need:o.count,start:kills,xp:o.xp,gold:o.gold}; toast("PURGE — destroy "+o.count+" hostiles","#ff9a00"); }
+  else { quest={type:"salvage",need:o.count,start:astKills,xp:o.xp,gold:o.gold}; toast("SALVAGE — break "+o.count+" asteroids","#9fc4ff"); }
   state="playing"; }
 function declineQuest(){ questOnPlanet=questOffer.planet; questOffer=null; state="playing"; }   // leave & return to get a new offer
 function completeCargo(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
@@ -558,9 +581,15 @@ function completeCargo(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold
   if(quest.dest)quest.dest.spent=true; grantQuestProgress(); quest=null; questCooldown=3; }
 function claimBounty(e){ if(quest&&quest.type==="bounty"&&quest.target===e){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
   toast("BOUNTY CLAIMED   +"+quest.gold+"g","#46e85a"); Sound.evolve(); grantQuestProgress(); quest=null; questCooldown=3; } }
+function completeTask(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
+  toast((quest.type==="purge"?"PURGE COMPLETE":"SALVAGE COMPLETE")+"   +"+quest.gold+"g","#46e85a"); Sound.evolve();
+  particles.push(...burst(player.x,player.y,"#ffd400",24)); grantQuestProgress(); quest=null; questCooldown=3; }
 function questTick(dt){ if(questCooldown>0)questCooldown-=dt; ensurePlanets();
   if(quest){ if(quest.type==="cargo"){ const p=quest.dest,dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+26)*(p.r+26)) completeCargo(); }
-    else if(quest.type==="bounty"&&!quest.target) quest=null; questOnPlanet=null; return; }
+    else if(quest.type==="bounty"){ if(!quest.target) quest=null; }
+    else if(quest.type==="purge"){ if(kills-quest.start>=quest.need) completeTask(); }
+    else if(quest.type==="salvage"){ if(astKills-quest.start>=quest.need) completeTask(); }
+    questOnPlanet=null; return; }
   // no active quest: offer only on a FRESH entry into an unspent station (leave & return for a new one)
   let cur=null; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)){ cur=p; break; } }
   if(cur&&cur!==questOnPlanet&&questCooldown<=0) openQuestOffer(cur);
@@ -719,7 +748,7 @@ function drawWorld(){
 
   const dp=droneParams();
   if(dp){ for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
-    ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#46e85a"; ctx.fillStyle="#46e85a"; ctx.beginPath(); ctx.arc(dx,dy,dp.r*0.6,0,TAU); ctx.fill(); ctx.restore(); } }
+    ctx.save(); ctx.translate(dx,dy); ctx.rotate(a+Math.PI/2); ctx.shadowBlur=8; ctx.shadowColor="#46e85a"; ctx.drawImage(droneImg,-droneImg.width/2,-droneImg.height/2); ctx.restore(); } }
 
   const blink=now<player.invuln&&Math.floor(now/60)%2===0;
   if(!blink){ const s=shipCanvas[player.ship]||shipCanvas.vanguard; ctx.save(); ctx.translate(player.x,player.y); ctx.rotate(player.facing+Math.PI/2); ctx.drawImage(s.c,-s.w/2,-s.h/2); ctx.restore(); }
@@ -762,6 +791,10 @@ function drawHUD(){
 }
 // screen-space chevron pointing to the current objective (active quest target, else nearest planet)
 function drawObjectiveArrow(){
+  if(quest&&(quest.type==="purge"||quest.type==="salvage")){   // no world target — show a progress counter instead
+    const cur=Math.min((quest.type==="purge"?kills:astKills)-quest.start,quest.need);
+    ctx.textAlign="center"; ctx.fillStyle="#ffd400"; ctx.font="bold 14px 'Courier New',monospace";
+    ctx.fillText((quest.type==="purge"?"PURGE ":"SALVAGE ")+cur+"/"+quest.need,W/2,70); return; }
   let obj=null,label="",col="#54f0ff";
   if(quest&&quest.type==="cargo"){ obj=quest.dest; label="CARGO → "+obj.name; col=obj.color; }
   else if(quest&&quest.type==="bounty"&&quest.target&&!quest.target.dead){ obj=quest.target; label="BOUNTY"; col="#ff3b3b"; }
@@ -784,6 +817,7 @@ function drawIcon(c,cx,cy,r){ ctx.save(); ctx.translate(cx,cy); ctx.strokeStyle=
   else if(id==="scatter"){ for(let i=0;i<6;i++){ const a=i/6*TAU; ctx.beginPath(); ctx.arc(Math.cos(a)*r*0.7,Math.sin(a)*r*0.7,2.5,0,TAU); ctx.fill(); } }
   else if(id==="missiles"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.6,r*0.6); ctx.lineTo(-r*0.6,r*0.6); ctx.closePath(); ctx.fill(); }
   else if(id==="lightning"){ ctx.beginPath(); ctx.moveTo(-r*0.4,-r); ctx.lineTo(r*0.2,-r*0.1); ctx.lineTo(-r*0.2,0); ctx.lineTo(r*0.4,r); ctx.stroke(); }
+  else if(id==="pulse"){ ring(r*0.95); ctx.beginPath(); ctx.arc(0,0,3,0,TAU); ctx.fill(); }
   else if(id==="engine"){ for(let i=0;i<2;i++){ ctx.beginPath(); ctx.moveTo(-r*0.6,-r*0.4+i*r*0.7); ctx.lineTo(0,r*0.1+i*r*0.7); ctx.lineTo(r*0.6,-r*0.4+i*r*0.7); ctx.stroke(); } }
   else if(id==="amp"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.8,r*0.6); ctx.lineTo(-r*0.8,r*0.6); ctx.closePath(); ctx.fill(); }
   else if(id==="coolant"){ for(let i=0;i<6;i++){ ctx.save(); ctx.rotate(i*Math.PI/3); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-r); ctx.stroke(); ctx.restore(); } }
@@ -813,11 +847,14 @@ function drawLevelUp(){ ctx.fillStyle="rgba(4,5,13,0.78)"; ctx.fillRect(0,0,W,H)
     ctx.strokeStyle="#54f0ff"; ctx.lineWidth=hov?3:2; ctx.strokeRect(bx+1,by+1,bw-2,bh-2);
     ctx.fillStyle="#54f0ff"; ctx.font="bold 15px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText("⟳ REROLL  [R]   ×"+rerolls,bx+bw/2,by+24); }
 }
-function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer,cargo=o.type==="cargo";
+function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
+  const titles={cargo:"◆ CARGO HAUL",bounty:"◆ BOUNTY CONTRACT",purge:"◆ PURGE CONTRACT",salvage:"◆ SALVAGE RUN"};
+  const descs={cargo:"Haul cargo to a distant station — about a minute's flight.",bounty:"Hunt down the marked elite out in the swarm.",
+    purge:"Destroy "+o.count+" hostiles anywhere in the swarm.",salvage:"Break "+o.count+" asteroids out in the field."};
   ctx.fillStyle="rgba(4,5,13,0.82)"; ctx.fillRect(0,0,W,H);
   center([{t:o.planet.name.toUpperCase()+" STATION",c:o.planet.color,f:"bold 28px 'Courier New',monospace",lh:0,g:true}],H/2-150);
-  center([{t:cargo?"◆ CARGO HAUL":"◆ BOUNTY CONTRACT",c:"#ffd400",f:"bold 20px 'Courier New',monospace",lh:0}],H/2-110);
-  center([{t:cargo?"Haul cargo to a distant station — about a minute's flight.":"Hunt down the marked elite out in the swarm.",c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],H/2-74);
+  center([{t:titles[o.type],c:"#ffd400",f:"bold 20px 'Courier New',monospace",lh:0}],H/2-110);
+  center([{t:descs[o.type],c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],H/2-74);
   center([{t:"REWARD   +"+o.xp+" XP    +"+o.gold+" GOLD",c:"#46e85a",f:"bold 16px 'Courier New',monospace",lh:0}],H/2-40);
   panelBtn("ACCEPT  [Y]",W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
   panelBtn("DECLINE [N]",W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
@@ -884,17 +921,13 @@ function drawShips(){
 }
 
 function settingsControls(backFn,allowReset){   // shared by the start-menu Settings panel and the in-game pause menu
-  const rowW=420,x=(W-rowW)/2; let y=132;
-  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("SOUND EFFECTS",x,y-8);
-  const tx=x,ty=y+4,tw=rowW,th=14; bar(tx,ty,tw,th,Sound.getVol(),"#54f0ff","#0a1430");
-  ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(Sound.getVol()*100)+"%",x+rowW,y-8);
-  uiRects.push({x:tx,y:ty-8,w:tw,h:th+16,on:()=>{ const v=clamp((mouse.x-tx)/tw,0,1); Sound.setVol(v); saveOpt("vr_vol",v); }});
-  y+=56;
-  ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText("MUSIC VOLUME",x,y-8);
-  const mty=y+4; bar(tx,mty,tw,th,Sound.getMusicVol(),"#ff6ad5","#0a1430");
-  ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(Sound.getMusicVol()*100)+"%",x+rowW,y-8);
-  uiRects.push({x:tx,y:mty-8,w:tw,h:th+16,on:()=>{ const v=clamp((mouse.x-tx)/tw,0,1); Sound.setMusicVol(v); saveOpt("vr_musicvol",v); }});
-  y+=56;
+  const rowW=420,x=(W-rowW)/2,tx=x,tw=rowW,th=14; let y=110;
+  const slider=(label,col,get,set)=>{ ctx.textAlign="left"; ctx.fillStyle="#9fc4ff"; ctx.font="14px 'Courier New',monospace"; ctx.fillText(label,x,y-8);
+    bar(tx,y+4,tw,th,get(),col,"#0a1430"); ctx.textAlign="right"; ctx.fillStyle="#cfe"; ctx.fillText(Math.round(get()*100)+"%",x+rowW,y-8);
+    uiRects.push({x:tx,y:y-4,w:tw,h:th+16,on:()=>set(clamp((mouse.x-tx)/tw,0,1))}); y+=52; };
+  slider("MASTER VOLUME","#b388ff",Sound.getMaster,v=>{Sound.setMaster(v);saveOpt("vr_master",v);});
+  slider("SOUND EFFECTS","#54f0ff",Sound.getVol,v=>{Sound.setVol(v);saveOpt("vr_vol",v);});
+  slider("MUSIC VOLUME","#ff6ad5",Sound.getMusicVol,v=>{Sound.setMusicVol(v);saveOpt("vr_musicvol",v);});
   toggleRow("SOUND",!Sound.isMuted(),x,y,rowW,()=>{ const m=Sound.toggle(); saveOpt("vr_mute",m); }); y+=48;
   toggleRow("SCREEN SHAKE",shakeEnabled,x,y,rowW,()=>{ shakeEnabled=!shakeEnabled; saveOpt("vr_shake",shakeEnabled); }); y+=48;
   if(allowReset){ const armed=resetArm>now;
@@ -982,7 +1015,7 @@ function render(){ ctx.clearRect(0,0,W,H); drawBackdrop();
   if(state==="paused") drawPause();
   if(state==="gameover") drawGameOver();
   if(DEV){ ctx.save(); ctx.textAlign="center"; ctx.font="9px 'Courier New',monospace"; ctx.fillStyle=devGod?"#46e85a":"#7a6a20";
-    ctx.fillText("DEV(`)  L lvl · B boss · H heal · V god · X kill · T +60s · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
+    ctx.fillText("DEV(`)  L lvl · K evolve · B boss · H heal · V god · X kill · T +60s · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
   // gamepad focus highlight
   if(padConnected){ let hr=null;
     if((state==="start"||state==="paused")&&uiRects[navIdx]) hr=uiRects[navIdx];
