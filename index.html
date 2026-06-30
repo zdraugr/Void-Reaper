@@ -331,7 +331,7 @@ function fireWeapons(dt){
       case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
-      case "laser": { const range=evo?460:340+30*lv, width=evo?16:9+1.5*lv, base=(evo?22:7+4*lv),
+      case "laser": { const range=evo?460:130+65*lv, width=evo?16:9+1.5*lv, base=(evo?22:7+4*lv),   // starts short (lv1 ~195), reaches full length (~455) at max level
           dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?3.6:3.0-0.12*lv)*cdMult();   // cd>dur leaves a gap between beams (Eclipse: between sweeps)
         if((w.beamT||0)>0){ w.beamT-=dt;
           if(evo){ w.beamAng=(w.beamAng||0)+(TAU/dur)*dt; }                                      // sweep one full circle over the duration
@@ -365,10 +365,10 @@ function fireWeapons(dt){
 /* ============================================================================
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
-const TYPES={ mite:{spr:"mite",hp:18,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:22,sp:80,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:32,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:56,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
-  spitter:{spr:"spitter",hp:26,sp:64,val:4,dmg:7,r:14},
-  bomber:{spr:"bomber",hp:18,sp:140,val:3,dmg:0,r:11} };
+const TYPES={ mite:{spr:"mite",hp:28,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:80,val:1,dmg:7,r:14},
+  moth:{spr:"moth",hp:44,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
+  spitter:{spr:"spitter",hp:36,sp:64,val:4,dmg:7,r:14},
+  bomber:{spr:"bomber",hp:28,sp:140,val:3,dmg:0,r:11} };
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -824,7 +824,7 @@ function drawWorld(){
     ctx.save(); ctx.translate(dx,dy); ctx.rotate(a+Math.PI/2); ctx.shadowBlur=8; ctx.shadowColor="#46e85a"; ctx.drawImage(droneImg,-droneImg.width/2,-droneImg.height/2); ctx.restore(); } }
 
   for(const w of player.weapons){
-    if(w.base==="laser"&&w.beamT>0){ const range=w.evo?460:340+30*w.level, width=w.evo?16:9+1.5*w.level, a=w.beamAng||0, col=WDEF[w.id].color, ex=player.x+Math.cos(a)*range, ey=player.y+Math.sin(a)*range;
+    if(w.base==="laser"&&w.beamT>0){ const range=w.evo?460:130+65*w.level, width=w.evo?16:9+1.5*w.level, a=w.beamAng||0, col=WDEF[w.id].color, ex=player.x+Math.cos(a)*range, ey=player.y+Math.sin(a)*range;
       ctx.save(); ctx.globalCompositeOperation="lighter"; ctx.lineCap="round"; ctx.shadowBlur=16; ctx.shadowColor=col;
       ctx.strokeStyle=col; ctx.globalAlpha=0.85; ctx.lineWidth=width*2; ctx.beginPath(); ctx.moveTo(player.x,player.y); ctx.lineTo(ex,ey); ctx.stroke();
       ctx.strokeStyle="#fff"; ctx.globalAlpha=1; ctx.lineWidth=Math.max(2,width*0.6); ctx.beginPath(); ctx.moveTo(player.x,player.y); ctx.lineTo(ex,ey); ctx.stroke(); ctx.restore(); }
