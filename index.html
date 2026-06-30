@@ -172,6 +172,7 @@ let runs = Store.get("vr_runs",[]);            // past-run history (most recent 
 let meta = Store.get("vr_meta",{});            // permanent gold-bought perks: id -> level
 if(!unlocked.includes(selectedShip)) selectedShip="vanguard";
 let menu="main";                                // start-screen sub-panel: main|ships|settings|runs|upgrades
+let runsPage=0, runsSort="recent";              // Past Runs paging (10/page) + sort: recent | best
 let pausePanel="root";                           // in-game pause menu: root | settings
 let bossKills=0, resetArm=0;                     // bosses slain this run; reset-progress confirm timer
 let shakeEnabled = Store.get("vr_shake",true);   // settings: camera shake on/off
@@ -541,7 +542,7 @@ function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP()
 function gameOver(){ state="gameover"; lastEarned=Math.floor(CONFIG.goldPerRun(gameTime,kills)*(1+0.1*M("greed"))); gold+=lastEarned; Store.set("vr_gold",gold);
   if(gameTime>bestTime){ bestTime=gameTime; Store.set("vr_best",bestTime); }
   runs.unshift({date:Date.now(),time:gameTime,kills,bosses:bossKills,ship:player.ship,level:player.level,gold:lastEarned});
-  if(runs.length>20) runs.length=20; Store.set("vr_runs",runs);   // persists only when DEV is off (sandbox guard)
+  if(runs.length>50) runs.length=50; Store.set("vr_runs",runs);   // persists only when DEV is off (sandbox guard)
   Sound.over(); shakeT=0.5; }
 
 /* ============================================================================
@@ -890,7 +891,7 @@ function drawMainMenu(){
   const items=[["START","start"],["SHIPS","ships"],["UPGRADES","upgrades"],["SETTINGS","settings"],["PAST RUNS","runs"]];
   const bw=300,bh=46,gap=12,x=(W-bw)/2; let y=178;
   for(const [label,act] of items){ const s=act==="start";
-    panelBtn(label,x,y,bw,bh,()=>{ if(act==="start") startGame(); else menu=act; },
+    panelBtn(label,x,y,bw,bh,()=>{ if(act==="start") startGame(); else { if(act==="runs") runsPage=0; menu=act; } },
       {color:s?"#46e85a":undefined,text:s?"#7CFFA0":"#cfe",font:s?"bold 21px 'Courier New',monospace":"bold 17px 'Courier New',monospace"});
     y+=bh+gap; }
   const sel=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
@@ -958,18 +959,31 @@ function drawRuns(){
   center([{t:"PAST RUNS",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
   ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="13px 'Courier New',monospace"; ctx.fillText(runs.length+" runs · best "+fmtTime(bestTime),W/2,86);
   if(!runs.length){ center([{t:"No runs yet — play one!",c:"#3a5fb0",f:"15px 'Courier New',monospace",lh:0}],H/2); backBtn(); return; }
-  const x=W/2-360,w=720; let y=116;
+  // ordered view (recent = stored order; best = longest survival first), then paginate 10/page
+  const ordered = runsSort==="best" ? runs.slice().sort((a,b)=>b.time-a.time) : runs;
+  const per=10, pages=Math.max(1,Math.ceil(ordered.length/per));
+  runsPage=Math.max(0,Math.min(runsPage,pages-1));
+  // sort toggle (top-right)
+  const sortW=92,sortY=98,sortX=W/2+360-sortW*2-8;
+  panelBtn("RECENT",sortX,sortY,sortW,26,()=>{ runsSort="recent"; runsPage=0; },{font:"bold 12px 'Courier New',monospace",color:runsSort==="recent"?"#54f0ff":"#2a3a66",text:runsSort==="recent"?"#fff":"#7e9"});
+  panelBtn("BEST",sortX+sortW+8,sortY,sortW,26,()=>{ runsSort="best"; runsPage=0; },{font:"bold 12px 'Courier New',monospace",color:runsSort==="best"?"#54f0ff":"#2a3a66",text:runsSort==="best"?"#fff":"#7e9"});
+  const x=W/2-360,w=720; let y=140;
   ctx.textAlign="left"; ctx.fillStyle="#3a5fb0"; ctx.font="11px 'Courier New',monospace";
   ctx.fillText("#",x+6,y); ctx.fillText("TIME",x+44,y); ctx.fillText("KILLS",x+140,y); ctx.fillText("BOSS",x+232,y); ctx.fillText("LV",x+312,y); ctx.fillText("SHIP",x+380,y); ctx.textAlign="right"; ctx.fillText("GOLD",x+w-6,y);
   y+=8;
-  const rows=Math.min(runs.length,9);
-  for(let i=0;i<rows;i++){ const r=runs[i],ry=y+i*30;
+  const start=runsPage*per, slice=ordered.slice(start,start+per);
+  for(let i=0;i<slice.length;i++){ const r=slice[i],ry=y+i*30;
     ctx.fillStyle=i%2?"rgba(10,16,36,0.5)":"rgba(16,24,50,0.5)"; ctx.fillRect(x,ry,w,28);
-    ctx.textAlign="left"; ctx.font="13px 'Courier New',monospace"; ctx.fillStyle="#cfe"; ctx.fillText(String(i+1),x+6,ry+19);
+    ctx.textAlign="left"; ctx.font="13px 'Courier New',monospace"; ctx.fillStyle="#cfe"; ctx.fillText(String(start+i+1),x+6,ry+19);
     ctx.fillStyle="#54f0ff"; ctx.fillText(fmtTime(r.time),x+44,ry+19);
     ctx.fillStyle="#cfe"; ctx.fillText(String(r.kills),x+140,ry+19); ctx.fillText(String(r.bosses||0),x+232,ry+19); ctx.fillText("Lv"+(r.level||1),x+312,ry+19);
     const sh=SHIPS.find(s=>s.id===r.ship); ctx.fillStyle=sh?sh.color:"#9fc4ff"; ctx.fillText(sh?sh.name:(r.ship||"-"),x+380,ry+19);
     ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.fillText("+"+(r.gold||0),x+w-6,ry+19); }
+  // page nav (only when more than one page)
+  if(pages>1){ const navY=y+per*30+10;
+    panelBtn("‹",W/2-110,navY,40,28,()=>{ runsPage=Math.max(0,runsPage-1); },{font:"bold 16px 'Courier New',monospace"});
+    panelBtn("›",W/2+70,navY,40,28,()=>{ runsPage=Math.min(pages-1,runsPage+1); },{font:"bold 16px 'Courier New',monospace"});
+    ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="bold 13px 'Courier New',monospace"; ctx.fillText("PAGE "+(runsPage+1)+" / "+pages,W/2,navY+19); }
   backBtn();
 }
 
