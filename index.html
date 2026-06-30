@@ -259,7 +259,7 @@ const META=[
   {id:"magnet",   name:"Magnet",   max:5, cost:STD, desc:"+20 pickup range"},
   {id:"regen",    name:"Regen",    max:5, cost:STD, desc:"+0.3 HP/sec"},
   {id:"greed",    name:"Greed",    max:5, cost:STD, desc:"+10% gold per run"},
-  {id:"growth",   name:"Growth",   max:5, cost:STD, desc:"+5% XP gained"},
+  {id:"growth",   name:"Growth",   max:5, cost:STD, desc:"+2% XP gained"},
   {id:"luck",     name:"Luck",     max:5, cost:STD, desc:"+heal/vacuum drop rate"},
   {id:"revival",  name:"Revival",  max:1, cost:()=>40000, desc:"1 free revive per run"},
   {id:"expansion",name:"Expansion Bay",max:1, cost:()=>80000, desc:"+1 weapon & passive slot (6 each)"}
@@ -510,7 +510,7 @@ function detonateMine(m){ if(m.dead)return; m.dead=true; explodeAt(m.x,m.y,m.bla
 /* ============================================================================
    XP / LEVEL UP
    ============================================================================ */
-function gainXP(v){ v*=(1+0.05*M("growth")); player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
+function gainXP(v){ v*=(1+0.02*M("growth")); player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
   if(player.pendingLevels>0&&state==="playing") openLevelUp(); }
 // the 6 evolution passives tied to draft-only weapons stay hidden until you own the weapon
 const GATED_PASSIVES=new Set(["capacitor","cryocoil","payload","targeting","plating","gyro"]);
@@ -692,7 +692,7 @@ function openQuestOffer(p){ const types=gameTime<120?["cargo","purge","salvage"]
 function spawnBountyTarget(){ spawnElite(); const t=enemies[enemies.length-1];
   if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1540,2200); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
     t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
-function grantQuestProgress(){ questsDone++; if(questsDone%5===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
+function grantQuestProgress(){ questsDone++; if(questsDone%3===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
 function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.planet; o.planet.spent=true;   // quest taken — sprite stays as scenery
   if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9900,12100),                            // ~1 minute's flight at base speed
       dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false};
