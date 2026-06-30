@@ -47,9 +47,9 @@ const CONFIG = {
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
   spawnBatch:    t => 1 + Math.floor(t/30),
   hpScale:       t => 1 + Math.min(t,420)*0.010,
-  eliteEvery: 55, eliteAfter: 30,
+  eliteEvery: 55, eliteAfter: 120,                // elites start at 2:00
   BOSS_FIRST: 300, BOSS_EVERY: 300,               // first boss at 5:00, then every 5 min
-  bossHp:  n => Math.round(1500 * Math.pow(1.7, n-1)),  // n = boss number (1,2,3...)
+  bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1)),  // n = boss number (1,2,3...)
   bossDmg: n => 24 + 9*n,
   BOOST_SPEED: 880, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME
   goldPerRun: (t,k) => Math.floor(t + k*0.4)      // gold earned at death
@@ -178,6 +178,7 @@ const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicV
 let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
+const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -199,7 +200,8 @@ const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0, hpMul:1, spdMul:1 };
 let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[], mines=[];
 let spawnTimer=0, eliteTimer=0, asteroidTimer=0, bossTimer=0, bossCount=0;
-let planets=[], quest=null, questOffer=null, questCooldown=0, questOnPlanet=null;   // quests & planets
+let planets=[], quests=[], questOffer=null, questCooldown=0, questOnPlanet=null;   // up to 3 active quests + planets
+const MAX_QUESTS=3;
 let obstacles=[];                              // non-mineable hazard belts
 let rerolls=0, questsDone=0, rerollRect=null, astKills=0;  // level-up rerolls earned every 5 quests; astKills tracks asteroids broken (salvage quests)
 let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
@@ -348,7 +350,7 @@ function fireWeapons(dt){
       case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
-      case "laser": { const range=evo?460:130+65*lv, width=evo?16:9+1.5*lv, base=(evo?22:7+4*lv),   // starts short (lv1 ~195), reaches full length (~455) at max level
+      case "laser": { const range=evo?460:130+65*lv, width=evo?16:9+1.5*lv, base=(evo?27.5:7+4*lv),   // evolved beam +25%; leveled starts short (lv1 ~195), reaches full length (~455) at max level
           dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?7.2:6.0-0.24*lv)*cdMult();   // cd>dur leaves a gap between beams (Eclipse: between sweeps)
         if((w.beamT||0)>0){ w.beamT-=dt;
           if(evo){ w.beamAng=(w.beamAng||0)+(TAU/dur)*dt; }                                      // sweep one full circle over the duration
@@ -383,12 +385,24 @@ function fireWeapons(dt){
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
 const TYPES={ mite:{spr:"mite",hp:19,sp:107,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:78,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:44,sp:64,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:48,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:45,val:45,dmg:22,r:34,big:true},
+  moth:{spr:"moth",hp:44,sp:64,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:48,val:8,dmg:14,r:18},
   spitter:{spr:"spitter",hp:36,sp:62,val:4,dmg:7,r:14},
   bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11} };   // sp = base move speed (−3% vs prior; bomber kept at 140)
+// elite variants — all share the 'elite' sprite/big body, differ by stats + behavior (a colored glow ring IDs them).
+// gunner shoots big slow bullets and is gated until the first boss is dead (postBoss).
+const ELITES=[
+  {v:"bruiser", hp:170,sp:45,dmg:22,r:34,val:45,col:"#ff5ff0"},
+  {v:"charger", hp:120,sp:98,dmg:28,r:28,val:45,col:"#ff9a00"},
+  {v:"warden",  hp:340,sp:30,dmg:20,r:42,val:60,col:"#7fffd0"},
+  {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55,col:"#b8ff3a"},
+  {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,col:"#ff2e6e",postBoss:true} ];
+function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
+function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
+  enemies.push({kind:"elite",variant:E.v,spr:"elite",eliteColor:E.col,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
-function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
+function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
+function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?6:3))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
   const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(35+Math.min(gameTime,360)*0.18);
   enemies.push({asteroid:true,spr:"asteroid",x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:0,val:0,dmg:0,r:20,big:false,flash:0,dead:false}); }
 function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee",16],["moth",t>25?Math.min(22,4+(t-25)*0.13):2],["tank",t>55?Math.min(9,(t-55)*0.045):0],["spitter",firstBossKill?Math.min(2.5,(t-firstBossKill)/120*2.5):0],["bomber",t>70?Math.min(8,(t-70)*0.05):0]];
@@ -474,6 +488,9 @@ function detonateMine(m){ if(m.dead)return; m.dead=true; explodeAt(m.x,m.y,m.bla
    ============================================================================ */
 function gainXP(v){ v*=(1+0.05*M("growth")); player.xp+=v; while(player.xp>=CONFIG.xpNeed(player.level)){ player.xp-=CONFIG.xpNeed(player.level); player.level++; player.pendingLevels++; }
   if(player.pendingLevels>0&&state==="playing") openLevelUp(); }
+// the 6 evolution passives tied to draft-only weapons stay hidden until you own the weapon
+const GATED_PASSIVES=new Set(["capacitor","cryocoil","payload","targeting","plating","gyro"]);
+function passiveShown(id){ if(!GATED_PASSIVES.has(id))return true; const wk=Object.keys(WDEF).find(k=>WDEF[k].evoReq===id); return player.weapons.some(w=>w.base===wk); }
 let levelChoices=[];
 function buildChoices(){
   const pool=[],oW=player.weapons.length,oP=Object.keys(player.passives).length;
@@ -481,7 +498,7 @@ function buildChoices(){
   for(const w of player.weapons){ if(w.evo)continue; const D=WDEF[w.id]; if(D.evoId&&w.level>=D.max&&P(D.evoReq)>=1) pool.push({kind:"evolve",base:w.base,id:D.evoId,req:D.evoReq}); }
   if(oW<maxWeapons()) for(const id of BASE_WEAPONS) if(!getWeapon(id)) pool.push({kind:"wnew",id});
   for(const id in PDEF) if(P(id)>0&&P(id)<PDEF[id].max) pool.push({kind:"pup",id});
-  if(oP<maxPassives()) for(const id in PDEF) if(!(id in player.passives)) pool.push({kind:"pnew",id});
+  if(oP<maxPassives()) for(const id in PDEF) if(!(id in player.passives)&&passiveShown(id)) pool.push({kind:"pnew",id});
   shuffle(pool);
   const evo=pool.find(c=>c.kind==="evolve"); let out=pool.slice(0,CONFIG.CHOICES);
   if(evo&&!out.includes(evo)) out[CONFIG.CHOICES-1]=evo;
@@ -609,7 +626,7 @@ function startGame(){
   player.hpMul=ship.hp||1; player.spdMul=ship.spd||1;   // per-ship bulk/speed (set before maxHP)
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality + ship hp), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];mines=[];
-  planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;astKills=0;obstacles=[]; ensurePlanets();
+  planets=[];quests=[];questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;astKills=0;obstacles=[]; ensurePlanets();
   gameTime=0;kills=0;bossKills=0;firstBossKill=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
@@ -633,7 +650,7 @@ const planetCol =()=>PLANET_COLS[(Math.random()*PLANET_COLS.length)|0];
 function spawnPlanet(){ const a=rand(0,TAU),d=rand(1500,3000);
   planets.push({x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false}); }
 // keep ~2 unspent planets within reach wherever the player roams; prune ones left far behind (active cargo beacon kept)
-function ensurePlanets(){ planets=planets.filter(p=>(quest&&p===quest.dest)||Math.hypot(p.x-player.x,p.y-player.y)<13000);
+function ensurePlanets(){ planets=planets.filter(p=>quests.some(q=>q.dest===p)||Math.hypot(p.x-player.x,p.y-player.y)<13000);
   let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3500)near++; }
   let g=0; while(near<2&&g++<8){ spawnPlanet(); near++; } }
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
@@ -642,34 +659,34 @@ function openQuestOffer(p){ const types=["cargo","bounty","purge","salvage"],typ
   if(type==="purge")q.count=15+player.level*2;
   if(type==="salvage")q.count=6+Math.floor(player.level/2);
   questOffer=q; state="quest"; Sound.pick(); }
-function spawnBountyTarget(){ spawnEnemy("elite"); const t=enemies[enemies.length-1];
+function spawnBountyTarget(){ spawnElite(); const t=enemies[enemies.length-1];
   if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1400,2000); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
     t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
 function grantQuestProgress(){ questsDone++; if(questsDone%5===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
 function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.planet; o.planet.spent=true;   // quest taken — sprite stays as scenery
   if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9000,11000),                            // ~1 minute's flight at base speed
       dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false};
-    planets.push(dest); quest={type:"cargo",dest,xp:o.xp,gold:o.gold}; toast("CARGO ACCEPTED → "+dest.name,"#ffd400"); }
-  else if(o.type==="bounty"){ const t=spawnBountyTarget(); quest={type:"bounty",target:t,xp:o.xp,gold:o.gold}; toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
-  else if(o.type==="purge"){ quest={type:"purge",need:o.count,start:kills,xp:o.xp,gold:o.gold}; toast("PURGE — destroy "+o.count+" hostiles","#ff9a00"); }
-  else { quest={type:"salvage",need:o.count,start:astKills,xp:o.xp,gold:o.gold}; toast("SALVAGE — break "+o.count+" asteroids","#9fc4ff"); }
+    planets.push(dest); quests.push({type:"cargo",dest,xp:o.xp,gold:o.gold}); toast("CARGO ACCEPTED → "+dest.name,"#ffd400"); }
+  else if(o.type==="bounty"){ const t=spawnBountyTarget(); quests.push({type:"bounty",target:t,xp:o.xp,gold:o.gold}); toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
+  else if(o.type==="purge"){ quests.push({type:"purge",need:o.count,start:kills,xp:o.xp,gold:o.gold}); toast("PURGE — destroy "+o.count+" hostiles","#ff9a00"); }
+  else { quests.push({type:"salvage",need:o.count,start:astKills,xp:o.xp,gold:o.gold}); toast("SALVAGE — break "+o.count+" asteroids","#9fc4ff"); }
   state="playing"; }
 function declineQuest(){ questOnPlanet=questOffer.planet; questOffer=null; state="playing"; }   // leave & return to get a new offer
-function completeCargo(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
-  toast("CARGO DELIVERED   +"+quest.gold+"g","#46e85a"); particles.push(...burst(player.x,player.y,"#ffd400",36)); fx.push({kind:"ring",x:player.x,y:player.y,r:90,life:0.4}); Sound.evolve();
-  if(quest.dest)quest.dest.spent=true; grantQuestProgress(); quest=null; questCooldown=3; }
-function claimBounty(e){ if(quest&&quest.type==="bounty"&&quest.target===e){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
-  toast("BOUNTY CLAIMED   +"+quest.gold+"g","#46e85a"); Sound.evolve(); grantQuestProgress(); quest=null; questCooldown=3; } }
-function completeTask(){ gainXP(quest.xp); gold+=quest.gold; Store.set("vr_gold",gold);
-  toast((quest.type==="purge"?"PURGE COMPLETE":"SALVAGE COMPLETE")+"   +"+quest.gold+"g","#46e85a"); Sound.evolve();
-  particles.push(...burst(player.x,player.y,"#ffd400",24)); grantQuestProgress(); quest=null; questCooldown=3; }
+function finishQuest(q){ gainXP(q.xp); gold+=q.gold; Store.set("vr_gold",gold); Sound.evolve();
+  grantQuestProgress(); quests.splice(quests.indexOf(q),1); questCooldown=3; }
+function completeCargo(q){ if(q.dest)q.dest.spent=true; toast("CARGO DELIVERED   +"+q.gold+"g","#46e85a");
+  particles.push(...burst(player.x,player.y,"#ffd400",36)); fx.push({kind:"ring",x:player.x,y:player.y,r:90,life:0.4}); finishQuest(q); }
+function claimBounty(e){ const q=quests.find(q=>q.type==="bounty"&&q.target===e); if(q){ toast("BOUNTY CLAIMED   +"+q.gold+"g","#46e85a"); finishQuest(q); } }
+function completeTask(q){ toast((q.type==="purge"?"PURGE COMPLETE":"SALVAGE COMPLETE")+"   +"+q.gold+"g","#46e85a");
+  particles.push(...burst(player.x,player.y,"#ffd400",24)); finishQuest(q); }
 function questTick(dt){ if(questCooldown>0)questCooldown-=dt; ensurePlanets();
-  if(quest){ if(quest.type==="cargo"){ const p=quest.dest,dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+26)*(p.r+26)) completeCargo(); }
-    else if(quest.type==="bounty"){ if(!quest.target) quest=null; }
-    else if(quest.type==="purge"){ if(kills-quest.start>=quest.need) completeTask(); }
-    else if(quest.type==="salvage"){ if(astKills-quest.start>=quest.need) completeTask(); }
-    questOnPlanet=null; return; }
-  // no active quest: offer only on a FRESH entry into an unspent station (leave & return for a new one)
+  for(const q of quests.slice()){   // slice: finishQuest mutates the array
+    if(q.type==="cargo"){ const p=q.dest,dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+26)*(p.r+26)) completeCargo(q); }
+    else if(q.type==="bounty"){ if(!q.target) quests.splice(quests.indexOf(q),1); }
+    else if(q.type==="purge"){ if(kills-q.start>=q.need) completeTask(q); }
+    else if(q.type==="salvage"){ if(astKills-q.start>=q.need) completeTask(q); } }
+  if(quests.length>=MAX_QUESTS){ questOnPlanet=null; return; }   // log full — no new offers
+  // offer only on a FRESH entry into an unspent station (leave & return for a new one)
   let cur=null; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)){ cur=p; break; } }
   if(cur&&cur!==questOnPlanet&&questCooldown<=0) openQuestOffer(cur);
   questOnPlanet=cur; }
@@ -708,8 +725,8 @@ function update(dt){
   // spawning
   const bossAlive=enemies.some(e=>e.boss);  // during a boss fight the encounter is just the boss + its own adds
   spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!bossAlive){ const b=CONFIG.spawnBatch(gameTime); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }
-  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!bossAlive){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnEnemy("elite"); shakeT=0.25; }
-  asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=rand(16,24); spawnAsteroid(); }
+  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!bossAlive){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnElite(); shakeT=0.25; }
+  asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=salvaging()?rand(4,8):rand(16,24); spawnAsteroid(); }
   bossTimer-=dt; if(bossTimer<=0){ if(enemies.some(e=>e.boss)) bossTimer=20; else spawnBoss(); }
 
   // chase + despawn
@@ -721,6 +738,9 @@ function update(dt){
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=3.2; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
       ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*240,vy:Math.sin(a)*240,r:6,dmg:Math.round(6+Math.min(gameTime,300)*0.03),life:3.5}); } }
+    if(e.variant==="gunner"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<620){ e.fireTimer=2.8; const a=Math.atan2(dy,dx);   // elite gunner: bigger, slower bullets than a spitter
+      ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*210,vy:Math.sin(a)*210,r:11,dmg:Math.round(14+Math.min(gameTime,300)*0.05),life:4.2}); } }
+    else if(e.variant==="summoner"){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=4; for(let i=0;i<2;i++){ const n0=enemies.length; spawnEnemy("mite"); if(enemies.length>n0){ const m=enemies[enemies.length-1]; m.x=e.x+rand(-30,30); m.y=e.y+rand(-30,30); } } } }
     if(e.kind==="bomber"&&d<40){ e.dead=true;                                   // kamikaze: detonate on contact
       particles.push(...burst(e.x,e.y,"#ff9a00",20)); fx.push({kind:"ring",x:e.x,y:e.y,r:70,life:0.3}); shakeT=Math.max(shakeT,0.25);
       if(now>=player.invuln){ player.hp-=dmgTaken(Math.round(16+Math.min(gameTime,300)*0.04)); player.invuln=now+180; Sound.hurt(); if(player.hp<=0) playerDied(); } } }
@@ -815,10 +835,11 @@ function drawWorld(){
 
   for(const e of enemies) blit(e.spr,e.x,e.y,e.flash>0);
   for(const e of enemies){ if(!e.big&&!e.asteroid)continue; const w=e.asteroid?40:46;
+    if(e.eliteColor){ ctx.save(); ctx.globalAlpha=0.5+0.2*Math.sin(now/200); ctx.strokeStyle=e.eliteColor; ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor=e.eliteColor; ctx.beginPath(); ctx.arc(e.x,e.y,e.r+5,0,TAU); ctx.stroke(); ctx.restore(); }
     ctx.fillStyle="#300"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w,4);
     ctx.fillStyle=e.asteroid?"#9fa7bd":"#46e85a"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w*(e.hp/e.maxhp),4); }
-  // bounty marker — pulsing red diamond over the quest elite so it's always identifiable
-  if(quest&&quest.type==="bounty"&&quest.target&&!quest.target.dead){ const t=quest.target,bob=Math.sin(now/140)*3,yy=t.y-t.r-18+bob;
+  // bounty marker — pulsing red diamond over each quest elite so it's always identifiable
+  for(const q of quests){ if(q.type!=="bounty"||!q.target||q.target.dead)continue; const t=q.target,bob=Math.sin(now/140)*3,yy=t.y-t.r-18+bob;
     ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#ff3b3b"; ctx.fillStyle="#ff3b3b"; ctx.strokeStyle="#fff"; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(t.x,yy-7); ctx.lineTo(t.x+7,yy); ctx.lineTo(t.x,yy+7); ctx.lineTo(t.x-7,yy); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
 
@@ -892,14 +913,18 @@ function drawHUD(){
 }
 // screen-space chevron pointing to the current objective (active quest target, else nearest planet)
 function drawObjectiveArrow(){
-  if(quest&&(quest.type==="purge"||quest.type==="salvage")){   // no world target — show a progress counter instead
-    const cur=Math.min((quest.type==="purge"?kills:astKills)-quest.start,quest.need);
-    ctx.textAlign="center"; ctx.fillStyle="#ffd400"; ctx.font="bold 14px 'Courier New',monospace";
-    ctx.fillText((quest.type==="purge"?"PURGE ":"SALVAGE ")+cur+"/"+quest.need,W/2,70); return; }
-  let obj=null,label="",col="#54f0ff";
-  if(quest&&quest.type==="cargo"){ obj=quest.dest; label="CARGO → "+obj.name; col=obj.color; }
-  else if(quest&&quest.type==="bounty"&&quest.target&&!quest.target.dead){ obj=quest.target; label="BOUNTY"; col="#ff3b3b"; }
-  else { const p=nearestPlanet(); if(p){ obj=p; label=p.name; col=p.color; } }
+  // stack purge/salvage progress counters (no world target) at top-center
+  ctx.textAlign="center"; ctx.font="bold 14px 'Courier New',monospace"; let cy=70;
+  for(const q of quests){ if(q.type!=="purge"&&q.type!=="salvage")continue;
+    const cur=Math.min((q.type==="purge"?kills:astKills)-q.start,q.need);
+    ctx.fillStyle="#ffd400"; ctx.fillText((q.type==="purge"?"PURGE ":"SALVAGE ")+cur+"/"+q.need,W/2,cy); cy+=20; }
+  // chevron to the nearest world-target quest (cargo/bounty), else nearest planet
+  let obj=null,label="",col="#54f0ff",best=Infinity;
+  for(const q of quests){ let o=null,l="",c="#54f0ff";
+    if(q.type==="cargo"){ o=q.dest; l="CARGO → "+o.name; c=o.color; }
+    else if(q.type==="bounty"&&q.target&&!q.target.dead){ o=q.target; l="BOUNTY"; c="#ff3b3b"; }
+    if(o){ const dx=o.x-player.x,dy=o.y-player.y,d=dx*dx+dy*dy; if(d<best){ best=d; obj=o; label=l; col=c; } } }
+  if(!obj){ const p=nearestPlanet(); if(p){ obj=p; label=p.name; col=p.color; } }
   if(!obj) return;
   const dx=obj.x-player.x,dy=obj.y-player.y,dist=Math.hypot(dx,dy); if(dist<320) return;   // hide when you're basically there
   const cs=dx/dist,sn=dy/dist,ix=W/2-40,iy=H/2-40,sc=1/Math.max(Math.abs(cs)/ix,Math.abs(sn)/iy);
@@ -1005,6 +1030,7 @@ function drawMainMenu(){
     panelBtn(label,x,y,bw,bh,()=>{ if(act==="start") startGame(); else { if(act==="runs") runsPage=0; menu=act; } },
       {color:s?"#46e85a":undefined,text:s?"#7CFFA0":"#cfe",font:s?"bold 21px 'Courier New',monospace":"bold 17px 'Courier New',monospace"});
     y+=bh+gap; }
+  if(IS_DESKTOP){ panelBtn("QUIT TO DESKTOP",x,y,bw,bh,()=>window.close(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 17px 'Courier New',monospace"}); y+=bh+gap; }
   const sel=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
   center([{t:"hull: "+sel.name+" · "+WDEF[sel.weapon].name,c:"#9fc4ff",f:"13px 'Courier New',monospace",lh:0}],y+16);
   if(Math.floor(now/500)%2===0) center([{t:"SPACE / ENTER = START",c:"#fff",f:"12px 'Courier New',monospace",lh:0}],y+40);
