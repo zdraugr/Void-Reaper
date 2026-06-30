@@ -47,10 +47,10 @@ const CONFIG = {
   xpNeed: lv => Math.floor(4 + lv*3 + lv*lv*1.2),   // ~30% faster leveling to offset the doubled kill-times
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
   spawnBatch:    t => 1 + Math.floor(t/30),
-  hpScale:       t => 1 + Math.min(t,420)*0.010,
+  hpScale:       t => 1 + t*0.010,   // uncapped (was Math.min(t,420)) — keeps climbing late game
   eliteEvery: 55, eliteAfter: 120,                // elites start at 2:00
   BOSS_FIRST: 300, BOSS_EVERY: 300,               // first boss at 5:00, then every 5 min
-  bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1)),  // n = boss number (1,2,3...)
+  bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1) * (n>=2?2.5:1)),  // n = boss number; +150% from boss #2 on
   bossDmg: n => 24 + 9*n,
   BOOST_SPEED: 968, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME (+10% global speed)
   goldPerRun: (t,k) => Math.floor(t + k*0.4)      // gold earned at death
@@ -215,7 +215,7 @@ let rerolls=0, questsDone=0, rerollRect=null, astKills=0;  // level-up rerolls e
 let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
 let padMoveX=0,padMoveY=0,padPrev={},padConnected=false,navIdx=0,prevState="";   // gamepad state + menu focus
-const stars=[]; let prevX=0, prevY=0;
+const stars=[]; let prevX=0, prevY=0, playerMoving=false;
 for(let i=0;i<200;i++){ const L=i%4; stars.push({x:Math.random()*W,y:Math.random()*H,f:[0.22,0.45,0.8,1.0][L],sz:[1,1,1,2][L],c:["#3a2a6a","#6a4fb0","#2de2e6","#ff6ad5"][L],tw:rand(0,TAU)}); }
 const nebulae=[]; for(let i=0;i<5;i++) nebulae.push({x:rand(0,W),y:rand(0,H),r:rand(180,360),c:["#ff2e97","#2de2e6","#b14aed","#ff6ad5","#5a7dff"][i],f:rand(0.05,0.13)});
 
@@ -228,7 +228,8 @@ const aoeR=()=>1+0.12*P("field");   // Resonance Field passive: +12%/lv area-eff
 const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"))*(1+0.15*P("payload"))*(1+0.15*P("targeting"));
 const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste"))*(1-0.07*P("capacitor")));
 const magnetR=()=>86+30*P("magnet")+20*M("magnet");
-const regen=()=>0.5*P("nanobots")+0.3*M("regen");
+const regen=()=>0.25*P("nanobots")+0.3*M("regen");   // nanobots nerfed to half
+const enemyDmgScale=()=>1+Math.max(0,gameTime-180)*0.0015;   // contact damage ramps after 3:00, uncapped (~1.6x @10min)
 const maxWeapons=()=>CONFIG.MAX_WEAPONS+M("expansion");   // Expansion Bay perk: +1 weapon & passive slot
 const maxPassives=()=>CONFIG.MAX_PASSIVES+M("expansion");
 const boostCdMax=()=>7-P("boost");
@@ -410,7 +411,7 @@ function spawnAngle(){ const g=now*0.0006; return g + CONFIG.SPAWN_GAP + rand(0,
 function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime));   // staggered radius so waves arrive spread out, not as a closing ring
-  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
+  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0,frostproof:gameTime>300&&Math.random()<0.35}); }   // frostproof = immune to cryo slow (after 5:00)
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?6:3))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
   const ang=rand(0,TAU),rad=rand(220,Math.hypot(W,H)/2*0.85),hp=Math.round(35+Math.min(gameTime,360)*0.18);
@@ -512,7 +513,7 @@ function buildChoices(){
   shuffle(pool);
   const evo=pool.find(c=>c.kind==="evolve"); let out=pool.slice(0,CONFIG.CHOICES);
   if(evo&&!out.includes(evo)) out[CONFIG.CHOICES-1]=evo;
-  while(out.length<CONFIG.CHOICES) out.push({kind:"heal"});
+  while(out.length<CONFIG.CHOICES) out.push(pool.length===0&&out.length>0?{kind:"gold"}:{kind:"heal"});   // all maxed: 1 Repair Hull + 2× gold
   const cardW=260,cardH=264,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
   out.forEach((c,i)=>{ c.rect={x:x0+i*(cardW+gap),y:y0,w:cardW,h:cardH};
     if(c.kind==="wnew"){ const d=WDEF[c.id]; c.title=d.name;c.tag="NEW WEAPON";c.color=d.color;c.text=d.desc; }
@@ -520,6 +521,7 @@ function buildChoices(){
     else if(c.kind==="evolve"){ const d=WDEF[c.id]; c.title=d.name;c.tag="✦ EVOLVE ✦";c.color="#ffd400";c.text=d.desc; }
     else if(c.kind==="pnew"){ const d=PDEF[c.id]; c.title=d.name;c.tag="NEW PASSIVE";c.color=d.color;c.text=d.desc; }
     else if(c.kind==="pup"){ const d=PDEF[c.id]; c.title=d.name;c.tag="Lv "+(P(c.id)+1);c.color=d.color;c.text=d.desc; }
+    else if(c.kind==="gold"){ c.title="Salvage Credits";c.tag="+500 GOLD";c.color="#ffd400";c.text="Nothing left to install — bank the scrap."; }
     else { c.title="Repair Hull";c.tag="+30% HP";c.color="#46e85a";c.text="Nothing left to install — patch the hull instead."; }
     c.combo="";   // show evolution pairing so it's clear what combos with what
     if(c.kind==="wnew"||c.kind==="wup"){ const base=c.base||c.id,req=WDEF[base]&&WDEF[base].evoReq; if(req) c.combo="✦ pairs with "+PDEF[req].name; }
@@ -535,6 +537,7 @@ function choose(i){ const c=levelChoices[i]; if(!c)return;
   else if(c.kind==="pnew"){ player.passives[c.id]=1; if(c.id==="reactor")player.hp=Math.min(maxHP(),player.hp+30); }
   else if(c.kind==="pup"){ player.passives[c.id]=P(c.id)+1; if(c.id==="reactor")player.hp=Math.min(maxHP(),player.hp+30); }
   else if(c.kind==="heal") player.hp=Math.min(maxHP(),player.hp+maxHP()*0.3);
+  else if(c.kind==="gold"){ gold+=500; Store.set("vr_gold",gold); toast("+500 GOLD","#ffd400"); }
   player.pendingLevels--; if(player.pendingLevels>0) buildChoices(); else state="playing";
 }
 
@@ -570,6 +573,7 @@ addEventListener("keydown",e=>{ Sound.init(); Sound.resume(); const st=state;
       if(e.code==="KeyH"){ player.hp=maxHP(); floatText("HEALED"); }
       if(e.code==="KeyV"){ devGod=!devGod; floatText(devGod?"GOD ON":"GOD OFF"); }
       if(e.code==="KeyT"){ gameTime+=60; floatText("+60s"); }
+      if(e.code==="KeyN"){ gems.push({x:player.x,y:player.y,vacuum:true,val:0,vx:0,vy:0}); floatText("MAGNET"); }
       if(e.code==="KeyX"){ for(const en of enemies){ if(!en.asteroid&&!en.dead) hurtEnemy(en,1e9); } floatText("KILL ALL"); }
       if(e.code==="KeyK"){ // fill weapon slots, max + evolve all, grant every passive
         for(const id of BASE_WEAPONS){ if(!getWeapon(id))player.weapons.push({id,base:id,level:1,timer:0,evo:false}); }   // dev: grant ALL weapons (ignore slot cap) so new ones/evos are testable
@@ -725,21 +729,21 @@ function update(dt){
 
   // movement (with dash)
   if(player.boostCd>0) player.boostCd-=dt;
-  if(player.boosting>0){ player.x+=player.boostDir.x*CONFIG.BOOST_SPEED*dt; player.y+=player.boostDir.y*CONFIG.BOOST_SPEED*dt; player.boosting-=dt; }
+  if(player.boosting>0){ player.x+=player.boostDir.x*CONFIG.BOOST_SPEED*dt; player.y+=player.boostDir.y*CONFIG.BOOST_SPEED*dt; player.boosting-=dt; playerMoving=true; }
   else { let mx=0,my=0;
     if(keys["ArrowLeft"]||keys["KeyA"])mx-=1; if(keys["ArrowRight"]||keys["KeyD"])mx+=1;
     if(keys["ArrowUp"]||keys["KeyW"])my-=1; if(keys["ArrowDown"]||keys["KeyS"])my+=1;
     mx+=padMoveX; my+=padMoveY;   // gamepad left stick / d-pad
     if(mx||my){ const l=Math.hypot(mx,my); mx/=l; my/=l; player.facing=Math.atan2(my,mx); }
     else { const t=nearest(player.x,player.y,9999); if(t)player.facing=Math.atan2(t.y-player.y,t.x-player.x); }
-    const spd=moveSpeed(); player.x+=mx*spd*dt; player.y+=my*spd*dt; }
+    const spd=moveSpeed(); player.x+=mx*spd*dt; player.y+=my*spd*dt; playerMoving=!!(mx||my); }
   player.orbit+=dt*2.2; player.hp=Math.min(maxHP(),player.hp+regen()*dt);
 
   // spawning
   const bossAlive=enemies.some(e=>e.boss);  // during a boss fight the encounter is just the boss + its own adds
   if(bossGrace>0) bossGrace-=dt; const swarmHeld=bossAlive||bossGrace>0;   // post-boss grace keeps the swarm suppressed a few seconds
-  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!swarmHeld){ const b=CONFIG.spawnBatch(gameTime); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }
-  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!swarmHeld){ eliteTimer=CONFIG.eliteEvery; const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnElite(); shakeT=0.25; }
+  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!swarmHeld){ const b=CONFIG.spawnBatch(gameTime)+(gameTime>300&&playerMoving?2:0); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }   // late game: roaming pulls a bigger swarm
+  eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!swarmHeld){ eliteTimer=Math.max(25,CONFIG.eliteEvery-gameTime*0.05); const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnElite(); shakeT=0.25; }   // interval shrinks 55→25s late game
   asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=salvaging()?rand(4,8):rand(16,24); spawnAsteroid(); }
   bossTimer-=dt; if(bossTimer<=0){ if(enemies.some(e=>e.boss)) bossTimer=20; else spawnBoss(); }
 
@@ -747,7 +751,7 @@ function update(dt){
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt; if(e.chill>0){ e.chill-=dt; if(e.chill<=0)e.shatter=false; }
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty){ e.dead=true; continue; }
-    if(!e.asteroid){ const slow=e.chill>0?(e.shatter?0.25:0.5):1, sp=e.sp*1.1; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // *1.1 = +10% global speed
+    if(!e.asteroid){ const slow=e.frostproof?1:(e.chill>0?(e.shatter?0.25:0.5):1), sp=e.sp*1.1; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // *1.1 = +10% global speed; frostproof ignores chill
     if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=3.2; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
@@ -775,7 +779,7 @@ function update(dt){
 
   // contact damage (asteroids don't hurt you; devGod ignores all damage)
   if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+CONFIG.PLAYER_R;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg); player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg*enemyDmgScale()); player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // enemy bullets (boss + spitters) vs player (same i-frames as contact damage)
   if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+CONFIG.PLAYER_R;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(b.dmg); b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
@@ -847,7 +851,8 @@ function drawWorld(){
     ctx.fillStyle="#3a1a10"; ctx.beginPath(); ctx.arc(m.x,m.y,7,0,TAU); ctx.fill();
     ctx.fillStyle="rgba(255,90,50,"+(0.4+0.6*pl).toFixed(2)+")"; ctx.beginPath(); ctx.arc(m.x,m.y,3,0,TAU); ctx.fill(); ctx.restore(); }
 
-  for(const e of enemies) blit(e.spr,e.x,e.y,e.flash>0);
+  for(const e of enemies){ if(e.frostproof){ ctx.save(); ctx.globalAlpha=0.45+0.15*Math.sin(now/200); ctx.strokeStyle="#bfefff"; ctx.lineWidth=2; ctx.shadowBlur=6; ctx.shadowColor="#7ad7ff"; ctx.beginPath(); ctx.arc(e.x,e.y,e.r+3,0,TAU); ctx.stroke(); ctx.restore(); }   // icy ring marks frost-immune foes
+    blit(e.spr,e.x,e.y,e.flash>0); }
   for(const e of enemies){ if(!e.big&&!e.asteroid)continue; const w=e.asteroid?40:46;
     ctx.fillStyle="#300"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w,4);
     ctx.fillStyle=e.asteroid?"#9fa7bd":"#46e85a"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w*(e.hp/e.maxhp),4); }
@@ -1183,7 +1188,7 @@ function render(){ ctx.clearRect(0,0,W,H); drawBackdrop();
   if(state==="paused") drawPause();
   if(state==="gameover") drawGameOver();
   if(DEV){ ctx.save(); ctx.textAlign="center"; ctx.font="9px 'Courier New',monospace"; ctx.fillStyle=devGod?"#46e85a":"#7a6a20";
-    ctx.fillText("DEV(`)  L lvl · K evolve · B boss · H heal · V god · X kill · T +60s · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
+    ctx.fillText("DEV(`)  L lvl · K evolve · B boss · H heal · V god · X kill · T +60s · N magnet · G +gold · U ships"+(devGod?"   [GOD]":""),W/2,42); ctx.restore(); }
   // gamepad focus highlight
   if(padConnected){ let hr=null;
     if((state==="start"||state==="paused")&&uiRects[navIdx]) hr=uiRects[navIdx];
