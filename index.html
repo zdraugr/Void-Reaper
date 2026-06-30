@@ -43,7 +43,7 @@
 const CONFIG = {
   MAX_WEAPONS: 5, MAX_PASSIVES: 4, CHOICES: 3,
   ENEMY_CAP: 240, DESPAWN_DIST: 1700,
-  xpNeed: lv => Math.floor(5 + lv*4 + lv*lv*1.7),
+  xpNeed: lv => Math.floor(4 + lv*3 + lv*lv*1.2),   // ~30% faster leveling to offset the doubled kill-times
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
   spawnBatch:    t => 1 + Math.floor(t/30),
   hpScale:       t => 1 + Math.min(t,420)*0.010,
