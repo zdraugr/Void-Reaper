@@ -151,6 +151,7 @@ const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicV
     missile(){ noise(.18,.16,1200); tone(140,.2,"sawtooth",.08,40); },
     boost(){ tone(260,.2,"sawtooth",.13,820); noise(.16,.12,2400); },
     crack(){ noise(.22,.3,1400); tone(120,.25,"square",.1,50); },
+    beam(){ tone(760,.28,"sawtooth",.07,420); noise(.2,.05,3200); },
     hurt(){ if(gate("h",120)){ if(!playBuf("takedamage",0.9)){ noise(.18,.3,900); tone(180,.18,"square",.12,70);} } },
     level(){ if(!playBuf("levelup",0.9)){ tone(523,.12,"square",.16,660); setTimeout(()=>tone(784,.16,"square",.16,1046),110);} },
     bossDie(){ if(!playBuf("destroyboss",0.95)){ tone(440,.1,"square",.18,880); setTimeout(()=>tone(880,.18,"square",.18,1760),190); noise(.22,.3,1400);} },
@@ -182,7 +183,7 @@ Sound.setMaster(Store.get("vr_master",1)); Sound.setVol(Store.get("vr_vol",0.45)
 
 const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0 };
-let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[];
+let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[], mines=[];
 let spawnTimer=0, eliteTimer=0, asteroidTimer=0, bossTimer=0, bossCount=0;
 let planets=[], quest=null, questOffer=null, questCooldown=0, questOnPlanet=null;   // quests & planets
 let obstacles=[];                              // non-mineable hazard belts
@@ -197,14 +198,14 @@ const nebulae=[]; for(let i=0;i<5;i++) nebulae.push({x:rand(0,W),y:rand(0,H),r:r
 /* ---------------- stat getters ---------------- */
 const P=id=>player.passives[id]||0;
 const M=id=>meta[id]||0;   // permanent meta-perk level
-const maxHP=()=>100+30*P("reactor")+20*M("vitality");
-const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"));
-const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"));
-const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste")));
+const maxHP=()=>100+30*P("reactor")+20*M("vitality")+25*P("cryocoil");
+const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"))*(1+0.07*P("gyro"));
+const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"))*(1+0.15*P("payload"))*(1+0.15*P("targeting"));
+const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste"))*(1-0.07*P("capacitor")));
 const magnetR=()=>78+30*P("magnet")+20*M("magnet");
 const regen=()=>0.5*P("nanobots")+0.3*M("regen");
 const boostCdMax=()=>7-P("boost");
-const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor")));   // Armor perk reduces damage taken
+const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor"))*(1-0.06*P("plating")));   // Armor perk + Hardened Plating reduce damage taken
 
 /* ---- meta-upgrade registry (permanent perks bought with gold) ---- */
 const STD=L=>500*2**L;   // standard perk cost: 500/1000/2000/4000/8000 (maxing one = 15,500)
@@ -235,15 +236,27 @@ const WDEF={
   missiles:{name:"Seeker Pods",max:5,color:"#ff9a00",desc:"Homing missiles that detonate on impact.",evoReq:"amp",evoId:"hunter"},
   lightning:{name:"Arc Coil",max:5,color:"#bff6ff",desc:"Chains lightning to nearby enemies.",evoReq:"nanobots",evoId:"tempest"},
   pulse:{name:"Pulse Wave",max:5,color:"#7CFFEA",desc:"Emits a shockwave that blasts everything around you.",evoReq:"boost",evoId:"quake"},
+  laser:{name:"Void Lance",max:5,color:"#ff2e6e",desc:"A sustained beam burns the nearest foe for a few seconds, then recharges.",evoReq:"capacitor",evoId:"eclipse"},
+  cryo:{name:"Cryo Field",max:5,color:"#7ad7ff",desc:"Chills and slows everything around you (light damage).",evoReq:"cryocoil",evoId:"abszero"},
+  mines:{name:"Void Mines",max:5,color:"#ff5533",desc:"Drops proximity mines along your path that detonate on contact.",evoReq:"payload",evoId:"minefield"},
+  chargerail:{name:"Charge Rail",max:5,color:"#c8b0ff",desc:"A slow, massive piercing shot at the toughest target. Anti-boss.",evoReq:"targeting",evoId:"executioner"},
+  aegis:{name:"Aegis Shield",max:5,color:"#7fffd0",desc:"Orbiting plates that shred foes and block enemy bullets.",evoReq:"plating",evoId:"bulwark"},
+  glaive:{name:"Boomerang Glaive",max:5,color:"#a0ff66",desc:"A blade that flies out, pierces, and returns to you.",evoReq:"gyro",evoId:"cyclone"},
   railgun:{name:"Rail Lance",color:"#bff6ff",desc:"A piercing rail bolt that runs the whole swarm through.",evolved:true},
   halo:{name:"Halo Swarm",color:"#46e85a",desc:"Eight heavy drones in a wide, lethal ring.",evolved:true},
   singularity:{name:"Singularity",color:"#ff5ff0",desc:"A vast field that drags foes in and melts them.",evolved:true},
   nova:{name:"Nova Burst",color:"#ffd400",desc:"Twin piercing rings sweep outward in every direction.",evolved:true},
   hunter:{name:"Hunter Swarm",color:"#ff9a00",desc:"A volley of seekers with bigger blasts.",evolved:true},
   tempest:{name:"Tempest",color:"#bff6ff",desc:"Lightning forks across the entire mob.",evolved:true},
-  quake:{name:"Quake Pulse",color:"#7CFFEA",desc:"A massive shockwave levels everything around you.",evolved:true}
+  quake:{name:"Quake Pulse",color:"#7CFFEA",desc:"A massive shockwave levels everything around you.",evolved:true},
+  eclipse:{name:"Eclipse",color:"#ff77aa",desc:"A heavy beam sweeps a full circle, then recharges.",evolved:true},
+  abszero:{name:"Absolute Zero",color:"#bfefff",desc:"A vast freezing field; chilled foes shatter on death.",evolved:true},
+  minefield:{name:"Minefield",color:"#ff7755",desc:"Mines drop fast and chain-detonate in huge blasts.",evolved:true},
+  executioner:{name:"Executioner",color:"#d8c0ff",desc:"A devastating rail shot that runs the whole line through, fast.",evolved:true},
+  bulwark:{name:"Bulwark",color:"#aaffe0",desc:"Three plates that reflect blocked bullets back as fire.",evolved:true},
+  cyclone:{name:"Cyclone",color:"#caff99",desc:"A fan of returning blades carves through the swarm.",evolved:true}
 };
-const BASE_WEAPONS=["blaster","drones","aura","scatter","missiles","lightning","pulse"];
+const BASE_WEAPONS=["blaster","drones","aura","scatter","missiles","lightning","pulse","laser","cryo","mines","chargerail","aegis","glaive"];
 const PDEF={
   engine:{name:"Ion Thrusters",max:5,color:"#54f0ff",desc:"+9% movement speed."},
   amp:{name:"Damage Amp",max:5,color:"#ff3b3b",desc:"+18% weapon damage."},
@@ -251,9 +264,16 @@ const PDEF={
   magnet:{name:"Tractor Field",max:5,color:"#ff5ff0",desc:"+pickup range for energy."},
   reactor:{name:"Reactor Core",max:5,color:"#46e85a",desc:"+30 max HP (and heals)."},
   nanobots:{name:"Nanobots",max:5,color:"#ffd400",desc:"Regenerates HP over time."},
-  boost:{name:"Afterburner",max:5,color:"#bff6ff",desc:"Tap SPACE to dash forward with brief i-frames. Levels cut the cooldown."}
+  boost:{name:"Afterburner",max:5,color:"#bff6ff",desc:"Tap SPACE to dash forward with brief i-frames. Levels cut the cooldown."},
+  capacitor:{name:"Capacitor Cells",max:5,color:"#ff77aa",desc:"-7% weapon cooldowns; supercharges the Void Lance."},
+  cryocoil:{name:"Cryo Coils",max:5,color:"#7ad7ff",desc:"+25 max HP; deepens Cryo Field's chill."},
+  payload:{name:"Volatile Payload",max:5,color:"#ff5533",desc:"+15% weapon damage; bigger mine blasts."},
+  targeting:{name:"Targeting AI",max:5,color:"#c8b0ff",desc:"+15% weapon damage; empowers the Charge Rail."},
+  plating:{name:"Hardened Plating",max:5,color:"#7fffd0",desc:"-6% damage taken; reinforces the Aegis Shield."},
+  gyro:{name:"Gyro Edge",max:5,color:"#a0ff66",desc:"+7% move speed; sharpens Glaive returns."}
 };
-const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning",quake:"pulse"};
+const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning",quake:"pulse",
+  eclipse:"laser",abszero:"cryo",minefield:"mines",executioner:"chargerail",bulwark:"aegis",cyclone:"glaive"};
 const getWeapon=base=>player.weapons.find(w=>w.base===base);
 
 /* ============================================================================
@@ -311,6 +331,32 @@ function fireWeapons(dt){
       case "drones": { const dp=droneParams(); if(w.timer<=0){ w.timer=dp.tick;
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
+      case "laser": { const range=evo?460:340+30*lv, width=evo?16:9+1.5*lv, dmg=(evo?22:7+4*lv)*dmgMult(),
+          dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?3.6:3.0-0.12*lv)*cdMult();   // cd>dur leaves a gap between beams (Eclipse: between sweeps)
+        if((w.beamT||0)>0){ w.beamT-=dt;
+          if(evo){ w.beamAng=(w.beamAng||0)+(TAU/dur)*dt; }                                      // sweep one full circle over the duration
+          else { const t=nearest(player.x,player.y,range); if(t){ const ta=Math.atan2(t.y-player.y,t.x-player.x); let da=ta-w.beamAng; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU; w.beamAng+=clamp(da,-6*dt,6*dt); } }
+          w.tickT=(w.tickT||0)-dt; if(w.tickT<=0){ w.tickT=0.1; beamHit(player.x,player.y,w.beamAng,range,width,dmg); } }
+        else if(w.timer<=0){ w.timer=cd; w.beamT=dur; w.tickT=0;
+          const t=nearest(player.x,player.y,range); w.beamAng=evo?(w.beamAng||0):(t?Math.atan2(t.y-player.y,t.x-player.x):player.facing); Sound.beam(); } } break;
+      case "cryo": if(w.timer<=0){ w.timer=0.3; const R=evo?170:90+18*lv, R2=R*R, dmg=(evo?10:3+2*lv)*dmgMult(), slowT=(evo?1.4:0.9)+0.08*P("cryocoil");
+        for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2){ e.chill=slowT; if(evo)e.shatter=true; hurtEnemy(e,dmg); } } } break;
+      case "mines": if(w.timer<=0){ w.timer=(evo?1.0:2.2-0.18*lv)*cdMult();
+        if(mines.length<40) mines.push({x:player.x,y:player.y,arm:46,blast:evo?92:54+6*lv,dmg:(evo?42:16+8*lv)*dmgMult(),life:14,t:0,chain:evo}); } break;
+      case "chargerail": if(w.timer<=0){ const range=evo?1100:850, dmg=(evo?260:90+45*lv)*dmgMult(), pierce=evo?99:6+lv;
+        w.timer=(evo?1.6:3.4-0.2*lv)*cdMult();
+        let t=enemies.find(e=>e.boss&&!e.dead);                                                  // boss first, else the tankiest in range, else nearest
+        if(!t){ let bh=-1; for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<range*range&&e.maxhp>bh){bh=e.maxhp;t=e;} } }
+        if(!t)t=nearest(player.x,player.y,range);
+        if(t){ const a=Math.atan2(t.y-player.y,t.x-player.x); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*1400,vy:Math.sin(a)*1400,dmg,pierce,r:6,life:1.1,color:WDEF[w.id].color,kind:"rail"}); Sound.zap(); } } break;
+      case "aegis": if(w.timer<=0){ w.timer=0.1; const count=evo?3:1+Math.floor(lv/2), R=evo?70:58, nodeR=evo?22:16, dmg=(evo?28:10+4*lv)*dmgMult();
+        for(let i=0;i<count;i++){ const a=player.orbit*1.3+i*(TAU/count), nx=player.x+Math.cos(a)*R, ny=player.y+Math.sin(a)*R;
+          for(const e of enemies){ if(e.dead)continue; const ex=e.x-nx,ey=e.y-ny; if(ex*ex+ey*ey<(nodeR+e.r)*(nodeR+e.r)) hurtEnemy(e,dmg); }
+          for(const b of ebullets){ if(b.life<=0)continue; const bx=b.x-nx,by=b.y-ny; if(bx*bx+by*by<(nodeR+b.r)*(nodeR+b.r)){ b.life=0;
+            if(evo){ const rx=nx-player.x,ry=ny-player.y,rl=Math.hypot(rx,ry)||1; spawnShot({x:nx,y:ny,vx:rx/rl*700,vy:ry/rl*700,dmg:dmg*1.5,pierce:2,r:6,life:1.2,color:WDEF[w.id].color,kind:"bolt"}); } } } } } break;
+      case "glaive": if(w.timer<=0){ w.timer=(evo?1.4:2.4-0.18*lv)*cdMult(); const count=evo?3:1, dmg=(evo?30:12+6*lv)*dmgMult();
+        const t=nearest(player.x,player.y,700), aim=t?Math.atan2(t.y-player.y,t.x-player.x):player.facing;
+        for(let i=0;i<count;i++){ const a=aim+(i-(count-1)/2)*0.5; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*520,vy:Math.sin(a)*520,dmg,pierce:9999,r:8,life:3.0,color:WDEF[w.id].color,kind:"glaive",outT:0.55,age:0}); } Sound.scatter(); } break;
     }
   }
 }
@@ -372,6 +418,7 @@ function hurtEnemy(e,dmg){ if(e.dead)return; e.hp-=dmg; e.flash=0.07;
       gems.push({x:e.x,y:e.y,val:e.val,vx:rand(-30,30),vy:rand(-30,30)});
       if(e.big&&Math.random()<0.8+0.03*M("luck")) gems.push({x:e.x+rand(-14,14),y:e.y+rand(-14,14),val:e.val,vx:0,vy:0,heal:true});
       if(e.bounty) claimBounty(e);
+      if(e.shatter){ e.shatter=false; explodeAt(e.x,e.y,70,40); }   // Absolute Zero: frozen foes burst (bounded — hurtEnemy guards re-entry)
       Sound.pop(); } } }
 function killBoss(e){ kills++; bossKills++;
   const n=28+Math.floor(gameTime/15);                       // big XP shower
@@ -391,6 +438,18 @@ function dropAsteroid(e){
 function explodeAt(x,y,r,dmg){ for(const e of queryNear(x,y,r)){ const dx=e.x-x,dy=e.y-y; if(dx*dx+dy*dy<r*r) hurtEnemy(e,dmg); }
   particles.push(...burst(x,y,"#ff9a00",16)); fx.push({kind:"ring",x,y,r,life:0.25}); }
 function burst(x,y,c,n){ const out=[]; for(let i=0;i<n;i++){ const a=rand(0,TAU),s=rand(40,260); out.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.3,.6),max:.6,c,sz:rand(2,4)}); } return out; }
+// laser beam: damage every enemy within `wid` of the ray from (px,py) along `ang`, out to `len` (excludes behind/beyond)
+function beamHit(px,py,ang,len,wid,dmg){ const cx=Math.cos(ang),cy=Math.sin(ang);
+  for(const e of enemies){ if(e.dead)continue; const dx=e.x-px,dy=e.y-py,proj=dx*cx+dy*cy; if(proj<0||proj>len)continue;
+    const perp=Math.abs(dx*cy-dy*cx); if(perp<wid+e.r) hurtEnemy(e,dmg); } }
+// ponytail: geometry self-check mirrors beamHit — on-axis in range hits, off-axis & behind miss
+console.assert((()=>{ const cx=1,cy=0,len=300,wid=10,pick=e=>{ const dx=e.x,dy=e.y,proj=dx*cx+dy*cy; return proj>=0&&proj<=len&&Math.abs(dx*cy-dy*cx)<wid+(e.r||0); };
+  return pick({x:100,y:0,r:5})&&!pick({x:100,y:50,r:5})&&!pick({x:-100,y:0,r:5})&&!pick({x:400,y:0,r:5}); })(),"beamHit geometry");
+function stepMines(dt){ for(const m of mines){ if(m.dead)continue; m.life-=dt; if(m.life<=0){ m.dead=true; continue; }
+    for(const e of queryNear(m.x,m.y,m.arm)){ if(e.dead||e.asteroid)continue; const dx=e.x-m.x,dy=e.y-m.y; if(dx*dx+dy*dy<m.arm*m.arm){ detonateMine(m); break; } } }
+  mines=mines.filter(m=>!m.dead&&Math.abs(m.x-player.x)<1600&&Math.abs(m.y-player.y)<1600); }
+function detonateMine(m){ if(m.dead)return; m.dead=true; explodeAt(m.x,m.y,m.blast,m.dmg); shakeT=Math.max(shakeT,0.12);
+  if(m.chain) for(const o of mines){ if(o===m||o.dead)continue; const dx=o.x-m.x,dy=o.y-m.y; if(dx*dx+dy*dy<150*150) detonateMine(o); } }
 
 /* ============================================================================
    XP / LEVEL UP
@@ -530,7 +589,7 @@ function startGame(){
   player.level=1;player.xp=0;player.pendingLevels=0;player.ship=ship.id;player.boostCd=0;player.boosting=0;
   player.weapons=[{id:ship.weapon,base:ship.weapon,level:1,timer:0,evo:false}]; player.passives={};
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality), with any Revival charges
-  enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];
+  enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];mines=[];
   planets=[];quest=null;questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=0;questsDone=0;astKills=0;obstacles=[]; ensurePlanets();
   gameTime=0;kills=0;bossKills=0;spawnTimer=0;eliteTimer=0;asteroidTimer=4;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;prevX=0;prevY=0; state="playing";
 }
@@ -636,9 +695,9 @@ function update(dt){
 
   // chase + despawn
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
-  for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt;
+  for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt; if(e.chill>0){ e.chill-=dt; if(e.chill<=0)e.shatter=false; }
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty){ e.dead=true; continue; }
-    if(!e.asteroid){ e.x+=dx/d*e.sp*dt; e.y+=dy/d*e.sp*dt; }
+    if(!e.asteroid){ const slow=e.chill>0?(e.shatter?0.25:0.5):1; e.x+=dx/d*e.sp*slow*dt; e.y+=dy/d*e.sp*slow*dt; }
     if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=3.2; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
@@ -646,12 +705,14 @@ function update(dt){
     if(e.kind==="bomber"&&d<40){ e.dead=true;                                   // kamikaze: detonate on contact
       particles.push(...burst(e.x,e.y,"#ff9a00",20)); fx.push({kind:"ring",x:e.x,y:e.y,r:70,life:0.3}); shakeT=Math.max(shakeT,0.25);
       if(now>=player.invuln){ player.hp-=dmgTaken(Math.round(16+Math.min(gameTime,300)*0.04)); player.invuln=now+180; Sound.hurt(); if(player.hp<=0) playerDied(); } } }
-  buildGrid(); separate(); fireWeapons(dt); bossActions(dt); stepEnemyBullets(dt);
+  buildGrid(); separate(); fireWeapons(dt); bossActions(dt); stepEnemyBullets(dt); stepMines(dt);
 
   // projectiles
   for(const s of shots){ if(s.kind==="missile"&&s.target){ if(s.target.dead)s.target=nearest(s.x,s.y,700);
       if(s.target){ const a=Math.atan2(s.target.y-s.y,s.target.x-s.x),cur=Math.atan2(s.vy,s.vx); let da=a-cur; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
         const na=cur+clamp(da,-4*dt,4*dt),sp=Math.min(460,Math.hypot(s.vx,s.vy)+700*dt); s.vx=Math.cos(na)*sp; s.vy=Math.sin(na)*sp; } }
+    else if(s.kind==="glaive"){ s.age+=dt; if(s.age>s.outT){ const a=Math.atan2(player.y-s.y,player.x-s.x),cur=Math.atan2(s.vy,s.vx); let da=a-cur; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
+        const na=cur+clamp(da,-8*dt,8*dt); s.vx=Math.cos(na)*600; s.vy=Math.sin(na)*600; const gx=player.x-s.x,gy=player.y-s.y; if(gx*gx+gy*gy<24*24)s.life=0; } }
     s.x+=s.vx*dt; s.y+=s.vy*dt; s.life-=dt; }
   for(const s of shots){ if(s.life<=0)continue;
     for(const e of queryNear(s.x,s.y,s.r+22)){ if(e.dead)continue; const dx=e.x-s.x,dy=e.y-s.y,rr=e.r+s.r;
@@ -726,6 +787,12 @@ function drawWorld(){
   const ai=auraInfo();
   if(ai){ ctx.save(); ctx.globalAlpha=0.12+0.04*Math.sin(now/120); ctx.fillStyle="#ff5ff0"; ctx.beginPath(); ctx.arc(player.x,player.y,ai.R,0,TAU); ctx.fill();
     ctx.globalAlpha=0.5; ctx.strokeStyle="#ff5ff0"; ctx.lineWidth=2; ctx.stroke(); ctx.restore(); }
+  for(const w of player.weapons){ if(w.base!=="cryo")continue; const R=w.evo?170:90+18*w.level;
+    ctx.save(); ctx.globalAlpha=0.10+0.03*Math.sin(now/200); ctx.fillStyle="#7ad7ff"; ctx.beginPath(); ctx.arc(player.x,player.y,R,0,TAU); ctx.fill();
+    ctx.globalAlpha=0.45; ctx.strokeStyle="#bfefff"; ctx.lineWidth=2; ctx.stroke(); ctx.restore(); }
+  for(const m of mines){ const pl=0.5+0.5*Math.sin(now/120+m.t*6); ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#ff5533";
+    ctx.fillStyle="#3a1a10"; ctx.beginPath(); ctx.arc(m.x,m.y,7,0,TAU); ctx.fill();
+    ctx.fillStyle="rgba(255,90,50,"+(0.4+0.6*pl).toFixed(2)+")"; ctx.beginPath(); ctx.arc(m.x,m.y,3,0,TAU); ctx.fill(); ctx.restore(); }
 
   for(const e of enemies) blit(e.spr,e.x,e.y,e.flash>0);
   for(const e of enemies){ if(!e.big&&!e.asteroid)continue; const w=e.asteroid?40:46;
@@ -738,7 +805,10 @@ function drawWorld(){
 
   ctx.save(); ctx.shadowBlur=6;
   for(const s of shots){ ctx.shadowColor=s.color; ctx.fillStyle=s.color;
-    if(s.kind==="missile") ctx.fillRect(Math.round(s.x-3),Math.round(s.y-3),6,6); else ctx.fillRect(Math.round(s.x-s.r/2),Math.round(s.y-s.r/2),s.r,s.r); } ctx.restore();
+    if(s.kind==="missile") ctx.fillRect(Math.round(s.x-3),Math.round(s.y-3),6,6);
+    else if(s.kind==="rail"){ const a=Math.atan2(s.vy,s.vx),L=48; ctx.strokeStyle=s.color; ctx.lineWidth=s.r||5; ctx.beginPath(); ctx.moveTo(Math.round(s.x),Math.round(s.y)); ctx.lineTo(Math.round(s.x-Math.cos(a)*L),Math.round(s.y-Math.sin(a)*L)); ctx.stroke(); }
+    else if(s.kind==="glaive"){ ctx.save(); ctx.translate(Math.round(s.x),Math.round(s.y)); ctx.rotate(now/40); ctx.fillRect(-s.r,-2,s.r*2,4); ctx.fillRect(-2,-s.r,4,s.r*2); ctx.restore(); }
+    else ctx.fillRect(Math.round(s.x-s.r/2),Math.round(s.y-s.r/2),s.r,s.r); } ctx.restore();
 
   // enemy bullets — red with a white core, so they read against pink mobs (distinct from cyan player shots)
   ctx.save(); ctx.shadowBlur=8; ctx.shadowColor="#ff2020";
@@ -751,6 +821,16 @@ function drawWorld(){
   const dp=droneParams();
   if(dp){ for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
     ctx.save(); ctx.translate(dx,dy); ctx.rotate(a+Math.PI/2); ctx.shadowBlur=8; ctx.shadowColor="#46e85a"; ctx.drawImage(droneImg,-droneImg.width/2,-droneImg.height/2); ctx.restore(); } }
+
+  for(const w of player.weapons){
+    if(w.base==="laser"&&w.beamT>0){ const range=w.evo?460:340+30*w.level, width=w.evo?16:9+1.5*w.level, a=w.beamAng||0, col=WDEF[w.id].color, ex=player.x+Math.cos(a)*range, ey=player.y+Math.sin(a)*range;
+      ctx.save(); ctx.globalCompositeOperation="lighter"; ctx.lineCap="round"; ctx.shadowBlur=16; ctx.shadowColor=col;
+      ctx.strokeStyle=col; ctx.globalAlpha=0.85; ctx.lineWidth=width*2; ctx.beginPath(); ctx.moveTo(player.x,player.y); ctx.lineTo(ex,ey); ctx.stroke();
+      ctx.strokeStyle="#fff"; ctx.globalAlpha=1; ctx.lineWidth=Math.max(2,width*0.6); ctx.beginPath(); ctx.moveTo(player.x,player.y); ctx.lineTo(ex,ey); ctx.stroke(); ctx.restore(); }
+    if(w.base==="aegis"){ const count=w.evo?3:1+Math.floor(w.level/2), R=w.evo?70:58, nodeR=w.evo?22:16, col=WDEF[w.id].color;
+      for(let i=0;i<count;i++){ const a=player.orbit*1.3+i*(TAU/count), nx=player.x+Math.cos(a)*R, ny=player.y+Math.sin(a)*R;
+        ctx.save(); ctx.translate(nx,ny); ctx.rotate(a); ctx.shadowBlur=10; ctx.shadowColor=col; ctx.strokeStyle=col; ctx.lineWidth=4; ctx.globalAlpha=0.9;
+        ctx.beginPath(); ctx.arc(0,0,nodeR,-0.85,0.85); ctx.stroke(); ctx.restore(); } } }
 
   const blink=now<player.invuln&&Math.floor(now/60)%2===0;
   if(!blink){ const s=shipCanvas[player.ship]||shipCanvas.vanguard; ctx.save(); ctx.translate(player.x,player.y); ctx.rotate(player.facing+Math.PI/2); ctx.drawImage(s.c,-s.w/2,-s.h/2); ctx.restore(); }
@@ -827,6 +907,18 @@ function drawIcon(c,cx,cy,r){ ctx.save(); ctx.translate(cx,cy); ctx.strokeStyle=
   else if(id==="reactor"){ ring(r*0.85); ctx.fillRect(-2,-r*0.5,4,r); ctx.fillRect(-r*0.5,-2,r,4); }
   else if(id==="nanobots"){ for(const p of [[-r*0.4,-r*0.4],[r*0.4,0],[-r*0.2,r*0.4]]){ ctx.fillRect(p[0]-1,p[1]-5,3,11); ctx.fillRect(p[0]-5,p[1]-1,11,3); } }
   else if(id==="boost"){ ctx.beginPath(); ctx.moveTo(-r*0.5,-r); ctx.lineTo(r*0.3,0); ctx.lineTo(-r*0.5,r); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.8,0); ctx.lineTo(0,r); ctx.stroke(); }
+  else if(id==="laser"){ ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(-r*0.2,r); ctx.lineTo(r*0.6,-r); ctx.stroke(); ctx.fillRect(-r,r*0.4,r*0.6,r*0.4); }
+  else if(id==="cryo"){ for(let i=0;i<3;i++){ ctx.save(); ctx.rotate(i*Math.PI/3); ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(0,r); ctx.stroke(); ctx.restore(); } }
+  else if(id==="mines"){ ring(r*0.45); for(let i=0;i<8;i++){ const a=i/8*TAU; ctx.beginPath(); ctx.moveTo(Math.cos(a)*r*0.45,Math.sin(a)*r*0.45); ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r); ctx.stroke(); } }
+  else if(id==="chargerail"){ ctx.fillRect(-2,-r*0.3,4,r*1.3); ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.4,-r*0.3); ctx.lineTo(-r*0.4,-r*0.3); ctx.closePath(); ctx.fill(); }
+  else if(id==="aegis"){ ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.75,-r*0.3); ctx.lineTo(0,r); ctx.lineTo(-r*0.75,-r*0.3); ctx.closePath(); ctx.stroke(); }
+  else if(id==="glaive"){ ctx.beginPath(); ctx.moveTo(-r*0.7,r*0.5); ctx.lineTo(0,-r*0.7); ctx.lineTo(r*0.7,r*0.5); ctx.stroke(); }
+  else if(id==="capacitor"){ ctx.strokeRect(-r*0.5,-r*0.7,r,r*1.4); ctx.fillRect(-r*0.18,-r,r*0.36,r*0.3); ctx.fillRect(-r*0.3,-r*0.2,r*0.6,r*0.5); }
+  else if(id==="cryocoil"){ for(let i=0;i<3;i++)ring(r*0.35+i*r*0.3); }
+  else if(id==="payload"){ ctx.beginPath(); ctx.arc(0,r*0.25,r*0.6,0,TAU); ctx.fill(); ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,-r*0.4); ctx.lineTo(r*0.3,-r); ctx.stroke(); }
+  else if(id==="targeting"){ ring(r*0.65); ctx.beginPath(); ctx.moveTo(-r,0); ctx.lineTo(r,0); ctx.moveTo(0,-r); ctx.lineTo(0,r); ctx.stroke(); }
+  else if(id==="plating"){ ctx.strokeRect(-r*0.75,-r*0.75,r*1.5,r*1.5); ctx.beginPath(); ctx.moveTo(-r*0.75,0); ctx.lineTo(r*0.75,0); ctx.moveTo(0,-r*0.75); ctx.lineTo(0,r*0.75); ctx.stroke(); }
+  else if(id==="gyro"){ ring(r*0.7); ctx.beginPath(); ctx.arc(0,-r*0.7,3.5,0,TAU); ctx.fill(); ctx.beginPath(); ctx.arc(0,r*0.7,3.5,0,TAU); ctx.fill(); }
   else { ctx.beginPath(); ctx.arc(0,0,r*0.6,0,TAU); ctx.fill(); }
   ctx.restore(); }
 function wrap(text,x,y,maxW,lh,color){ ctx.fillStyle=color; ctx.font="13px 'Courier New',monospace"; ctx.textAlign="center"; const words=text.split(" "); let line="",yy=y;
