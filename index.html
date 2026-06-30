@@ -378,10 +378,10 @@ function fireWeapons(dt){
 /* ============================================================================
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
-const TYPES={ mite:{spr:"mite",hp:28,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:80,val:1,dmg:7,r:14},
+const TYPES={ mite:{spr:"mite",hp:19,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:80,val:1,dmg:7,r:14},
   moth:{spr:"moth",hp:44,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
   spitter:{spr:"spitter",hp:36,sp:64,val:4,dmg:7,r:14},
-  bomber:{spr:"bomber",hp:28,sp:140,val:3,dmg:0,r:11} };
+  bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11} };
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
