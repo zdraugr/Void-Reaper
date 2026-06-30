@@ -42,7 +42,7 @@
    ============================================================================ */
 const CONFIG = {
   MAX_WEAPONS: 5, MAX_PASSIVES: 5, CHOICES: 3,
-  ENEMY_CAP: 240, DESPAWN_DIST: 1700,
+  ENEMY_CAP: 240, DESPAWN_DIST: 1700, PLAYER_R: 7,   // PLAYER_R = player collision pad added to enemy/bullet radius
   xpNeed: lv => Math.floor(4 + lv*3 + lv*lv*1.2),   // ~30% faster leveling to offset the doubled kill-times
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
   spawnBatch:    t => 1 + Math.floor(t/30),
@@ -51,7 +51,7 @@ const CONFIG = {
   BOSS_FIRST: 300, BOSS_EVERY: 300,               // first boss at 5:00, then every 5 min
   bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1)),  // n = boss number (1,2,3...)
   bossDmg: n => 24 + 9*n,
-  BOOST_SPEED: 880, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME
+  BOOST_SPEED: 968, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME (+10% global speed)
   goldPerRun: (t,k) => Math.floor(t + k*0.4)      // gold earned at death
 };
 
@@ -72,6 +72,7 @@ ctx.imageSmoothingEnabled = false;
 const rand=(a,b)=>a+Math.random()*(b-a), clamp=(v,a,b)=>v<a?a:v>b?b:v, TAU=Math.PI*2;
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 function inside(p,r){ return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h; }
+const pc=(kbd,pad)=>padConnected?pad:kbd;   // show controller label when a gamepad is connected, else the keyboard one
 
 /* ---------------- pixel sprites ---------------- */
 // synthwave palette: cyan hull, hot-magenta + purple foes, amber/white highlights
@@ -221,7 +222,8 @@ const nebulae=[]; for(let i=0;i<5;i++) nebulae.push({x:rand(0,W),y:rand(0,H),r:r
 const P=id=>player.passives[id]||0;
 const M=id=>meta[id]||0;   // permanent meta-perk level
 const maxHP=()=>(100+30*P("reactor")+20*M("vitality")+25*P("cryocoil"))*(player.hpMul||1);
-const moveSpeed=()=>175*(1+0.09*P("engine"))*(1+0.01*M("velocity"))*(1+0.07*P("gyro"))*(player.spdMul||1);
+const moveSpeed=()=>193*(1+0.09*P("engine"))*(1+0.01*M("velocity"))*(1+0.07*P("gyro"))*(player.spdMul||1);   // base 193 = 175 +10% global speed
+const aoeR=()=>1+0.12*P("field");   // Resonance Field passive: +12%/lv area-effect radius
 const dmgMult=()=>(1+0.18*P("amp"))*(1+0.08*M("might"))*(1+0.15*P("payload"))*(1+0.15*P("targeting"));
 const cdMult=()=>Math.max(0.40,(1-0.09*P("coolant"))*(1-0.04*M("haste"))*(1-0.07*P("capacitor")));
 const magnetR=()=>86+30*P("magnet")+20*M("magnet");
@@ -264,7 +266,7 @@ const WDEF={
   laser:{name:"Void Lance",max:5,color:"#ff2e6e",desc:"A sustained beam burns the nearest foe for a few seconds, then recharges.",evoReq:"capacitor",evoId:"eclipse"},
   cryo:{name:"Cryo Field",max:5,color:"#7ad7ff",desc:"Chills and slows everything around you (light damage).",evoReq:"cryocoil",evoId:"abszero"},
   mines:{name:"Void Mines",max:5,color:"#ff5533",desc:"Drops proximity mines along your path that detonate on contact.",evoReq:"payload",evoId:"minefield"},
-  chargerail:{name:"Charge Rail",max:5,color:"#c8b0ff",desc:"A slow, massive piercing shot at the toughest target. Anti-boss.",evoReq:"targeting",evoId:"executioner"},
+  chargerail:{name:"Charge Rail",max:5,color:"#c8b0ff",desc:"A slow, massive piercing shot at the nearest foe.",evoReq:"targeting",evoId:"executioner"},
   aegis:{name:"Aegis Shield",max:5,color:"#7fffd0",desc:"Orbiting plates that shred foes and block enemy bullets.",evoReq:"plating",evoId:"bulwark"},
   glaive:{name:"Boomerang Glaive",max:5,color:"#a0ff66",desc:"A blade that flies out, pierces, and returns to you.",evoReq:"gyro",evoId:"cyclone"},
   railgun:{name:"Rail Lance",color:"#bff6ff",desc:"A piercing rail bolt that runs the whole swarm through.",evolved:true},
@@ -295,7 +297,8 @@ const PDEF={
   payload:{name:"Volatile Payload",max:5,color:"#ff5533",desc:"+15% weapon damage; bigger mine blasts."},
   targeting:{name:"Targeting AI",max:5,color:"#c8b0ff",desc:"+15% weapon damage; empowers the Charge Rail."},
   plating:{name:"Hardened Plating",max:5,color:"#7fffd0",desc:"-6% damage taken; reinforces the Aegis Shield."},
-  gyro:{name:"Gyro Edge",max:5,color:"#a0ff66",desc:"+7% move speed; sharpens Glaive returns."}
+  gyro:{name:"Gyro Edge",max:5,color:"#a0ff66",desc:"+7% move speed; sharpens Glaive returns."},
+  field:{name:"Resonance Field",max:5,color:"#9b6bff",desc:"+12% area-effect radius (aura, pulse, cryo, blasts)."}
 };
 const ICON_OF={railgun:"blaster",halo:"drones",singularity:"aura",nova:"scatter",hunter:"missiles",tempest:"lightning",quake:"pulse",
   eclipse:"laser",abszero:"cryo",minefield:"mines",executioner:"chargerail",bulwark:"aegis",cyclone:"glaive"};
@@ -315,8 +318,8 @@ function droneParams(){ const w=getWeapon("drones"); if(!w)return null;
   if(w.evo)return {count:8,R:112,r:16,dmg:26*dmgMult(),tick:0.12};
   const lv=w.level; return {count:1+lv,R:54+6*lv,r:12,dmg:(12+5.5*lv)*dmgMult(),tick:0.16}; }
 function auraInfo(){ const w=getWeapon("aura"); if(!w)return null;
-  if(w.evo)return {R:140,dmg:20*dmgMult(),tick:0.25,pull:true};
-  const lv=w.level; return {R:70+13*lv,dmg:(4+3*lv)*dmgMult(),tick:0.35,pull:false}; }
+  if(w.evo)return {R:140*aoeR(),dmg:20*dmgMult(),tick:0.25,pull:true};
+  const lv=w.level; return {R:(70+13*lv)*aoeR(),dmg:(4+3*lv)*dmgMult(),tick:0.35,pull:false}; }
 
 function fireWeapons(dt){
   for(const w of player.weapons){ w.timer-=dt; const lv=w.level,evo=w.evo;
@@ -335,7 +338,7 @@ function fireWeapons(dt){
           for(let i=0;i<pel;i++){ const a=off+i/pel*TAU; spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*420,vy:Math.sin(a)*420,dmg,pierce:0,r:6,life:0.6,color:"#ffd400",kind:"bolt"}); } Sound.scatter(); }
       } break;
       case "missiles": if(w.timer<=0){
-        let count,dmg,blast,cd; if(evo){count=6;dmg=38*dmgMult();blast=52;cd=0.9;} else {count=1+Math.floor(lv/2);dmg=(14+7*lv)*dmgMult();blast=36;cd=1.5;}
+        let count,dmg,blast,cd; if(evo){count=6;dmg=38*dmgMult();blast=52*aoeR();cd=0.9;} else {count=1+Math.floor(lv/2);dmg=(14+7*lv)*dmgMult();blast=36*aoeR();cd=1.5;}
         w.timer=cd*cdMult(); const ts=kNearest(player.x,player.y,count,750);
         for(let i=0;i<count;i++){ const a=rand(0,TAU),t=ts[i]||nearest(player.x,player.y,950); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*120,vy:Math.sin(a)*120,dmg,pierce:0,r:6,life:3,color:"#ff9a00",kind:"missile",target:t,blast}); } Sound.missile();
       } break;
@@ -348,7 +351,7 @@ function fireWeapons(dt){
         for(const e of enemies){ if(e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y,d2=dx*dx+dy*dy;
           if(d2<ai.R*ai.R){ hurtEnemy(e,ai.dmg); if(ai.pull&&!e.asteroid){ const d=Math.sqrt(d2)||1,m=Math.min(d*0.12,14); e.x-=dx/d*m; e.y-=dy/d*m; } } } } } break;
       case "pulse": if(w.timer<=0){
-        let R,dmg,cd; if(evo){R=320;dmg=30*dmgMult();cd=1.1;} else {R=120+30*lv;dmg=(8+5*lv)*dmgMult();cd=1.8;}
+        let R,dmg,cd; if(evo){R=320*aoeR();dmg=30*dmgMult();cd=1.1;} else {R=(120+30*lv)*aoeR();dmg=(8+5*lv)*dmgMult();cd=1.8;}
         w.timer=cd*cdMult(); const R2=R*R;
         for(const e of enemies){ if(e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2) hurtEnemy(e,dmg); }
         fx.push({kind:"ring",x:player.x,y:player.y,r:R,life:0.4}); Sound.crack();
@@ -365,15 +368,13 @@ function fireWeapons(dt){
             beamHit(player.x,player.y,w.beamAng,range,width,base*(0.35+1.3*ramp)*dmgMult()); } }
         else { Sound.beamOff(); if(w.timer<=0){ w.timer=cd; w.beamT=dur; w.tickT=0;
           const t=nearest(player.x,player.y,range); w.beamAng=evo?(w.beamAng||0):(t?Math.atan2(t.y-player.y,t.x-player.x):player.facing); Sound.beam(); } } } break;
-      case "cryo": if(w.timer<=0){ w.timer=0.3; const R=evo?170:90+18*lv, R2=R*R, slowT=(evo?1.4:0.9)+0.08*P("cryocoil");   // pure control: slows only, no damage (Absolute Zero's shatter still fires on death)
+      case "cryo": if(w.timer<=0){ w.timer=0.3; const R=(evo?170:90+18*lv)*aoeR(), R2=R*R, slowT=(evo?1.4:0.9)+0.08*P("cryocoil");   // pure control: slows only, no damage (Absolute Zero's shatter still fires on death)
         for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<R2){ e.chill=slowT; if(evo)e.shatter=true; } } } break;
       case "mines": if(w.timer<=0){ w.timer=(evo?1.0:2.2-0.18*lv)*cdMult();
-        if(mines.length<40) mines.push({x:player.x,y:player.y,arm:46,blast:evo?92:54+6*lv,dmg:(evo?42:16+8*lv)*dmgMult(),life:14,t:0,chain:evo}); } break;
+        if(mines.length<40) mines.push({x:player.x,y:player.y,arm:46,blast:(evo?92:54+6*lv)*aoeR(),dmg:(evo?42:16+8*lv)*dmgMult(),life:14,t:0,chain:evo}); } break;
       case "chargerail": if(w.timer<=0){ const range=evo?1100:850, dmg=(evo?260:90+45*lv)*dmgMult(), pierce=evo?99:6+lv;
         w.timer=(evo?1.6:3.4-0.2*lv)*cdMult();
-        let t=enemies.find(e=>e.boss&&!e.dead);                                                  // boss first, else the tankiest in range, else nearest
-        if(!t){ let bh=-1; for(const e of enemies){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y; if(dx*dx+dy*dy<range*range&&e.maxhp>bh){bh=e.maxhp;t=e;} } }
-        if(!t)t=nearest(player.x,player.y,range);
+        const t=nearest(player.x,player.y,range);                                                // target the closest in range
         if(t){ const a=Math.atan2(t.y-player.y,t.x-player.x); spawnShot({x:player.x,y:player.y,vx:Math.cos(a)*1400,vy:Math.sin(a)*1400,dmg,pierce,r:6,life:1.1,color:WDEF[w.id].color,kind:"rail"}); Sound.zap(); } } break;
       case "aegis": if(w.timer<=0){ w.timer=0.1; const count=evo?3:1+Math.floor(lv/2), R=evo?70:58, nodeR=evo?22:16, dmg=(evo?28:10+4*lv)*dmgMult();
         for(let i=0;i<count;i++){ const a=player.orbit*1.3+i*(TAU/count), nx=player.x+Math.cos(a)*R, ny=player.y+Math.sin(a)*R;
@@ -405,7 +406,7 @@ const ELITES=[
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
 function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
-function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
+function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime));   // staggered radius so waves arrive spread out, not as a closing ring
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?6:3))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -464,7 +465,7 @@ function killBoss(e){ kills++; bossKills++; if(!firstBossKill)firstBossKill=game
   gems.push({x:e.x,y:e.y,heal:true,val:0,vx:0,vy:0});        // guaranteed heal
   gems.push({x:e.x,y:e.y,vacuum:true,val:0,vx:0,vy:0});      // and a vacuum to sweep it all in
   particles.push(...burst(e.x,e.y,"#ffd400",40)); fx.push({kind:"ring",x:e.x,y:e.y,r:90,life:0.4});
-  shakeT=Math.max(shakeT,0.5); bossGrace=4; floatText("BOSS DOWN"); Sound.bossDie(); }   // grace: hold the swarm back ~4s so you can clear the kill spot before it rebuilds
+  shakeT=Math.max(shakeT,0.5); bossGrace=6; floatText("BOSS DOWN"); Sound.bossDie(); }   // grace: hold the swarm back ~6s so you can clear the kill spot before it rebuilds
 function dropAsteroid(e){
   astKills++;
   const n=6+Math.floor(gameTime/30), v=1+Math.floor(gameTime/60);
@@ -588,6 +589,9 @@ function navStep(dx,dy){ if(uiRects.length<2)return; const cur=uiRects[navIdx]||
 function pollGamepad(){ let gp=null; const pads=navigator.getGamepads?navigator.getGamepads():[];
   for(const g of pads){ if(g){ gp=g; break; } }
   padConnected=!!gp; padMoveX=0; padMoveY=0;
+  if(padConnected!==pollGamepad._padWas){ pollGamepad._padWas=padConnected; const h=document.getElementById("hint");   // swap the page hint when a pad connects/disconnects
+    if(h) h.textContent=padConnected?"LEFT STICK / D-PAD MOVE · WEAPONS AUTO-FIRE · Ⓐ DASH · PICK UPGRADES (Ⓐ) · START PAUSE"
+      :"WASD / ARROWS MOVE · WEAPONS AUTO-FIRE · SPACE DASH (Afterburner) · PICK UPGRADES (1·2·3) · P PAUSE"; }
   if(state!==prevState){ navIdx=0; prevState=state; }
   if(!gp) return;
   const Bt=gp.buttons,Ax=gp.axes,down=i=>Bt[i]&&Bt[i].pressed,hit=i=>{ const p=down(i),e=p&&!padPrev[i]; padPrev[i]=p; return e; };
@@ -653,11 +657,11 @@ const PLANET_NAMES=["Keplar","Vos","Hadley","Cindra","Orrus","Talca","Myrrh","Dr
 const PLANET_COLS=["#8fb6ff","#ff9a6a","#7ce0a0","#d9a6ff","#ffd36a","#6ad9d9","#ff6a8f","#a0ff6a","#ffb347","#5a8cff","#c86aff","#46e8b0"];
 const planetName=()=>PLANET_NAMES[(Math.random()*PLANET_NAMES.length)|0];
 const planetCol =()=>PLANET_COLS[(Math.random()*PLANET_COLS.length)|0];
-function spawnPlanet(){ const a=rand(0,TAU),d=rand(1500,3000);
+function spawnPlanet(){ const a=rand(0,TAU),d=rand(1650,3300);
   planets.push({x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false}); }
 // keep ~2 unspent planets within reach wherever the player roams; prune ones left far behind (active cargo beacon kept)
-function ensurePlanets(){ planets=planets.filter(p=>quests.some(q=>q.dest===p)||Math.hypot(p.x-player.x,p.y-player.y)<13000);
-  let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3500)near++; }
+function ensurePlanets(){ planets=planets.filter(p=>quests.some(q=>q.dest===p)||Math.hypot(p.x-player.x,p.y-player.y)<14300);
+  let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3850)near++; }
   let g=0; while(near<2&&g++<8){ spawnPlanet(); near++; } }
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
 function openQuestOffer(p){ const types=["cargo","bounty","purge","salvage"],type=types[Math.random()*types.length|0],need=CONFIG.xpNeed(player.level);
@@ -666,11 +670,11 @@ function openQuestOffer(p){ const types=["cargo","bounty","purge","salvage"],typ
   if(type==="salvage")q.count=6+Math.floor(player.level/2);
   questOffer=q; state="quest"; Sound.pick(); }
 function spawnBountyTarget(){ spawnElite(); const t=enemies[enemies.length-1];
-  if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1400,2000); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
+  if(t&&t.kind==="elite"){ const a=rand(0,TAU),d=rand(1540,2200); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
     t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; } return null; }
 function grantQuestProgress(){ questsDone++; if(questsDone%5===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
 function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.planet; o.planet.spent=true;   // quest taken — sprite stays as scenery
-  if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9000,11000),                            // ~1 minute's flight at base speed
+  if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9900,12100),                            // ~1 minute's flight at base speed
       dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false};
     planets.push(dest); quests.push({type:"cargo",dest,xp:o.xp,gold:o.gold}); toast("CARGO ACCEPTED → "+dest.name,"#ffd400"); }
   else if(o.type==="bounty"){ const t=spawnBountyTarget(); quests.push({type:"bounty",target:t,xp:o.xp,gold:o.gold}); toast("BOUNTY MARKED — hunt the elite","#ff3b3b"); }
@@ -740,7 +744,7 @@ function update(dt){
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt; if(e.chill>0){ e.chill-=dt; if(e.chill<=0)e.shatter=false; }
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty){ e.dead=true; continue; }
-    if(!e.asteroid){ const slow=e.chill>0?(e.shatter?0.25:0.5):1; e.x+=dx/d*e.sp*slow*dt; e.y+=dy/d*e.sp*slow*dt; }
+    if(!e.asteroid){ const slow=e.chill>0?(e.shatter?0.25:0.5):1, sp=e.sp*1.1; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // *1.1 = +10% global speed
     if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<560){ e.fireTimer=3.2; const a=Math.atan2(dy,dx);  // ranged shot at the player — punishes constant-radius circling
@@ -748,7 +752,7 @@ function update(dt){
     if(e.variant==="gunner"){ e.fireTimer-=dt; if(e.fireTimer<=0&&d<620){ e.fireTimer=2.8; const a=Math.atan2(dy,dx);   // elite gunner: bigger, slower bullets than a spitter
       ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*210,vy:Math.sin(a)*210,r:11,dmg:Math.round(14+Math.min(gameTime,300)*0.05),life:4.2}); } }
     else if(e.variant==="summoner"){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=4; for(let i=0;i<2;i++){ const n0=enemies.length; spawnEnemy("mite"); if(enemies.length>n0){ const m=enemies[enemies.length-1]; m.x=e.x+rand(-30,30); m.y=e.y+rand(-30,30); } } } }
-    if(e.kind==="bomber"&&d<40){ e.dead=true;                                   // kamikaze: detonate on contact
+    if(e.kind==="bomber"&&d<28){ e.dead=true;                                   // kamikaze: detonate on contact
       particles.push(...burst(e.x,e.y,"#ff9a00",20)); fx.push({kind:"ring",x:e.x,y:e.y,r:70,life:0.3}); shakeT=Math.max(shakeT,0.25);
       if(now>=player.invuln){ player.hp-=dmgTaken(Math.round(16+Math.min(gameTime,300)*0.04)); player.invuln=now+180; Sound.hurt(); if(player.hp<=0) playerDied(); } } }
   buildGrid(); separate(); fireWeapons(dt); bossActions(dt); stepEnemyBullets(dt); stepMines(dt);
@@ -767,14 +771,14 @@ function update(dt){
   shots=shots.filter(s=>s.life>0&&Math.abs(s.x-player.x)<1200&&Math.abs(s.y-player.y)<1200);
 
   // contact damage (asteroids don't hurt you; devGod ignores all damage)
-  if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+10;
+  if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+CONFIG.PLAYER_R;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg); player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // enemy bullets (boss + spitters) vs player (same i-frames as contact damage)
-  if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+10;
+  if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+CONFIG.PLAYER_R;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(b.dmg); b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // obstacle belts: indestructible rocks that hurt on contact (weave through / go around)
   ensureObstacles();
-  if(!devGod&&now>=player.invuln){ for(const o of obstacles){ const dx=o.x-player.x,dy=o.y-player.y,rr=o.r+10;
+  if(!devGod&&now>=player.invuln){ for(const o of obstacles){ const dx=o.x-player.x,dy=o.y-player.y,rr=o.r+CONFIG.PLAYER_R;
     if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(11); player.invuln=now+200; shakeT=Math.max(shakeT,0.2); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
 
   // gems (magnet, pickup, vacuum)
@@ -990,7 +994,7 @@ function drawLevelUp(){ ctx.fillStyle="rgba(4,5,13,0.78)"; ctx.fillRect(0,0,W,H)
   if(rerolls>0){ const bw=250,bh=36,bx=(W-bw)/2,by=H/2+158; rerollRect={x:bx,y:by,w:bw,h:bh}; const hov=inside(mouse,rerollRect);
     ctx.fillStyle=hov?"rgba(20,40,70,0.95)":"rgba(10,20,40,0.92)"; ctx.fillRect(bx,by,bw,bh);
     ctx.strokeStyle="#54f0ff"; ctx.lineWidth=hov?3:2; ctx.strokeRect(bx+1,by+1,bw-2,bh-2);
-    ctx.fillStyle="#54f0ff"; ctx.font="bold 15px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText("⟳ REROLL  [R]   ×"+rerolls,bx+bw/2,by+24); }
+    ctx.fillStyle="#54f0ff"; ctx.font="bold 15px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText("⟳ REROLL  "+pc("[R]","[↓Ⓐ]")+"   ×"+rerolls,bx+bw/2,by+24); }
 }
 function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
   const titles={cargo:"◆ CARGO HAUL",bounty:"◆ BOUNTY CONTRACT",purge:"◆ PURGE CONTRACT",salvage:"◆ SALVAGE RUN"};
@@ -1001,8 +1005,8 @@ function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
   center([{t:titles[o.type],c:"#ffd400",f:"bold 20px 'Courier New',monospace",lh:0}],H/2-110);
   center([{t:descs[o.type],c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],H/2-74);
   center([{t:"REWARD   +"+o.xp+" XP    +"+o.gold+" GOLD",c:"#46e85a",f:"bold 16px 'Courier New',monospace",lh:0}],H/2-40);
-  panelBtn("ACCEPT  [Y]",W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
-  panelBtn("DECLINE [N]",W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
+  panelBtn(pc("ACCEPT  [Y]","ACCEPT  [Ⓐ]"),W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
+  panelBtn(pc("DECLINE [N]","DECLINE [Ⓑ]"),W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
 }
 function center(lines,baseY){ ctx.textAlign="center"; lines.forEach((l,i)=>{ ctx.fillStyle=l.c; ctx.font=l.f; if(l.g){ctx.save();ctx.shadowBlur=18;ctx.shadowColor=l.c;} ctx.fillText(l.t,W/2,baseY+i*l.lh); if(l.g)ctx.restore(); }); }
 
@@ -1040,7 +1044,7 @@ function drawMainMenu(){
   if(IS_DESKTOP){ panelBtn("QUIT TO DESKTOP",x,y,bw,bh,()=>window.close(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 17px 'Courier New',monospace"}); y+=bh+gap; }
   const sel=SHIPS.find(s=>s.id===selectedShip)||SHIPS[0];
   center([{t:"hull: "+sel.name+" · "+WDEF[sel.weapon].name,c:"#9fc4ff",f:"13px 'Courier New',monospace",lh:0}],y+16);
-  if(Math.floor(now/500)%2===0) center([{t:"SPACE / ENTER = START",c:"#fff",f:"12px 'Courier New',monospace",lh:0}],y+40);
+  if(Math.floor(now/500)%2===0) center([{t:pc("SPACE / ENTER = START","Ⓐ START"),c:"#fff",f:"12px 'Courier New',monospace",lh:0}],y+40);
 }
 
 function drawShips(){
@@ -1098,7 +1102,7 @@ function drawPause(){ uiRects=[]; ctx.fillStyle="rgba(4,5,13,0.74)"; ctx.fillRec
   panelBtn("RESUME",x,y,bw,bh,()=>{ state="playing"; },{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"}); y+=bh+14;
   panelBtn("SETTINGS",x,y,bw,bh,()=>{ pausePanel="settings"; },{font:"bold 17px 'Courier New',monospace"}); y+=bh+14;
   panelBtn("QUIT TO MENU",x,y,bw,bh,()=>quitToMenu(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 17px 'Courier New',monospace"});
-  center([{t:"ESC resumes · quitting banks this run's gold",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y+bh+26);
+  center([{t:pc("ESC","Ⓑ")+" resumes · quitting banks this run's gold",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y+bh+26);
 }
 
 function drawRuns(){
@@ -1162,7 +1166,7 @@ function drawGameOver(){ ctx.fillStyle="rgba(4,5,13,0.6)"; ctx.fillRect(0,0,W,H)
     {t:"LEVEL "+player.level+"   ·   "+kills+" KILLS",c:"#ffd400",f:"16px 'Courier New',monospace",lh:30},
     {t:"+ "+lastEarned+" GOLD   (total "+gold+")",c:"#ffe23d",f:"bold 16px 'Courier New',monospace",lh:30},
     {t:(gameTime>=bestTime?"NEW BEST TIME!":"BEST  "+fmtTime(bestTime)),c:"#ff5ff0",f:"16px 'Courier New',monospace",lh:46}],H/2-100);
-  if(Math.floor(now/500)%2===0) center([{t:"PRESS SPACE / CLICK FOR HANGAR",c:"#54f0ff",f:"bold 18px 'Courier New',monospace",lh:0,g:true}],H/2+96); }
+  if(Math.floor(now/500)%2===0) center([{t:pc("PRESS SPACE / CLICK FOR HANGAR","PRESS Ⓐ FOR HANGAR"),c:"#54f0ff",f:"bold 18px 'Courier New',monospace",lh:0,g:true}],H/2+96); }
 
 function render(){ ctx.clearRect(0,0,W,H); drawBackdrop();
   if(state!=="start"){ drawWorld(); drawHUD(); }
