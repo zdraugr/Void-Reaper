@@ -41,7 +41,7 @@
    Move only; weapons auto-fire. All balance numbers live in CONFIG.
    ============================================================================ */
 const CONFIG = {
-  MAX_WEAPONS: 4, MAX_PASSIVES: 4, CHOICES: 3,
+  MAX_WEAPONS: 5, MAX_PASSIVES: 5, CHOICES: 3,
   ENEMY_CAP: 240, DESPAWN_DIST: 1700,
   xpNeed: lv => Math.floor(4 + lv*3 + lv*lv*1.2),   // ~30% faster leveling to offset the doubled kill-times
   spawnInterval: t => Math.max(0.20, 0.90 - t*0.0045),
@@ -236,7 +236,7 @@ const META=[
   {id:"growth",   name:"Growth",   max:5, cost:STD, desc:"+5% XP gained"},
   {id:"luck",     name:"Luck",     max:5, cost:STD, desc:"+heal/vacuum drop rate"},
   {id:"revival",  name:"Revival",  max:1, cost:()=>40000, desc:"1 free revive per run"},
-  {id:"expansion",name:"Expansion Bay",max:1, cost:()=>80000, desc:"+1 weapon & passive slot (5 each)"}
+  {id:"expansion",name:"Expansion Bay",max:1, cost:()=>80000, desc:"+1 weapon & passive slot (6 each)"}
 ];
 const metaCost=p=>p.cost(M(p.id));                       // gold to buy the next level
 const metaSpent=()=>META.reduce((s,p)=>{ let t=0; for(let L=0;L<M(p.id);L++)t+=p.cost(L); return s+t; },0);
@@ -381,10 +381,10 @@ function fireWeapons(dt){
 /* ============================================================================
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
-const TYPES={ mite:{spr:"mite",hp:19,sp:110,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:80,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:44,sp:66,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:50,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:46,val:45,dmg:22,r:34,big:true},
-  spitter:{spr:"spitter",hp:36,sp:64,val:4,dmg:7,r:14},
-  bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11} };
+const TYPES={ mite:{spr:"mite",hp:19,sp:107,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:78,val:1,dmg:7,r:14},
+  moth:{spr:"moth",hp:44,sp:64,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:48,val:8,dmg:14,r:18}, elite:{spr:"elite",hp:170,sp:45,val:45,dmg:22,r:34,big:true},
+  spitter:{spr:"spitter",hp:36,sp:62,val:4,dmg:7,r:14},
+  bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11} };   // sp = base move speed (−3% vs prior; bomber kept at 140)
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=3)return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -485,7 +485,7 @@ function buildChoices(){
   const evo=pool.find(c=>c.kind==="evolve"); let out=pool.slice(0,CONFIG.CHOICES);
   if(evo&&!out.includes(evo)) out[CONFIG.CHOICES-1]=evo;
   while(out.length<CONFIG.CHOICES) out.push({kind:"heal"});
-  const cardW=200,cardH=250,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
+  const cardW=200,cardH=270,gap=28,total=CONFIG.CHOICES*cardW+(CONFIG.CHOICES-1)*gap,x0=(W-total)/2,y0=H/2-cardH/2+18;
   out.forEach((c,i)=>{ c.rect={x:x0+i*(cardW+gap),y:y0,w:cardW,h:cardH};
     if(c.kind==="wnew"){ const d=WDEF[c.id]; c.title=d.name;c.tag="NEW WEAPON";c.color=d.color;c.text=d.desc; }
     else if(c.kind==="wup"){ const d=WDEF[c.id]; c.title=d.name;c.tag="Lv "+(getWeapon(c.base).level+1);c.color=d.color;c.text=d.desc; }
@@ -940,7 +940,7 @@ function drawIcon(c,cx,cy,r){ ctx.save(); ctx.translate(cx,cy); ctx.strokeStyle=
   else { ctx.beginPath(); ctx.arc(0,0,r*0.6,0,TAU); ctx.fill(); }
   ctx.restore(); }
 function wrap(text,x,y,maxW,lh,color){ ctx.fillStyle=color; ctx.font="13px 'Courier New',monospace"; ctx.textAlign="center"; const words=text.split(" "); let line="",yy=y;
-  for(const w of words){ const test=line?line+" "+w:w; if(ctx.measureText(test).width>maxW){ ctx.fillText(line,x,yy); line=w; yy+=lh; } else line=test; } ctx.fillText(line,x,yy); }
+  for(const w of words){ const test=line?line+" "+w:w; if(ctx.measureText(test).width>maxW){ ctx.fillText(line,x,yy); line=w; yy+=lh; } else line=test; } ctx.fillText(line,x,yy); return yy; }
 
 function drawLevelUp(){ ctx.fillStyle="rgba(4,5,13,0.78)"; ctx.fillRect(0,0,W,H);
   ctx.textAlign="center"; ctx.fillStyle="#ffd400"; ctx.font="bold 30px 'Courier New',monospace"; ctx.save(); ctx.shadowBlur=16; ctx.shadowColor="#ffd400"; ctx.fillText("LEVEL UP — CHOOSE AN UPGRADE",W/2,H/2-150); ctx.restore();
@@ -950,8 +950,8 @@ function drawLevelUp(){ ctx.fillStyle="rgba(4,5,13,0.78)"; ctx.fillRect(0,0,W,H)
     drawIcon(c,r.x+r.w/2,r.y+58,26);
     ctx.fillStyle=c.color; ctx.font="bold 12px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText(c.tag,r.x+r.w/2,r.y+100);
     ctx.fillStyle="#fff"; ctx.font="bold 16px 'Courier New',monospace"; ctx.fillText(c.title,r.x+r.w/2,r.y+126);
-    wrap(c.text,r.x+r.w/2,r.y+154,r.w-26,18,"#9fc4ff");
-    if(c.combo){ ctx.fillStyle="#ffd400"; ctx.font="10px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText(c.combo,r.x+r.w/2,r.y+r.h-40); }
+    const descBot=wrap(c.text,r.x+r.w/2,r.y+154,r.w-26,18,"#9fc4ff");
+    if(c.combo){ ctx.fillStyle="#ffd400"; ctx.font="10px 'Courier New',monospace"; ctx.textAlign="center"; ctx.fillText(c.combo,r.x+r.w/2,Math.max(r.y+r.h-40,descBot+20)); }
     ctx.fillStyle=c.color; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("["+(i+1)+"]",r.x+r.w/2,r.y+r.h-16); });
   rerollRect=null;
   if(rerolls>0){ const bw=250,bh=36,bx=(W-bw)/2,by=H/2+158; rerollRect={x:bx,y:by,w:bw,h:bh}; const hov=inside(mouse,rerollRect);
