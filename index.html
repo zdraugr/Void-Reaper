@@ -146,24 +146,37 @@ const SHIP_SPR={
 for(const s of SHIPS){ const c=bake(SHIP_SPR[s.id]||SPR.player,4,false,{"1":s.color}); shipCanvas[s.id]={c,w:c.width,h:c.height}; }
 
 /* ---------------- sound ---------------- */
-const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,masterVol=1,bgm=null,beamNode=null; const thr={},sfxBuf={};
-  function startMusic(){ if(bgm)return; bgm=new Audio("music/backtospace.mp3"); bgm.loop=true; bgm.volume=musicVol*masterVol; bgm.muted=muted; bgm.play().catch(()=>{}); }
+const Sound=(()=>{ let ac=null,master=null,nbuf=null,muted=false,vol=0.45,musicVol=0.5,masterVol=1,beamNode=null; const thr={},sfxBuf={};
+  // --- music: 3 looping tracks (menu / game / boss) that crossfade between each other ---
+  let tracks={}, curTrack=null, fadeIv=null; const FADE=1.1;   // seconds per fade
+  const TRACK_SRC={menu:"music/mainmenumusic.mp3",game:"music/backtospace.mp3",boss:"music/bossmusic.mp3"};
+  function mTarget(){ return musicVol*masterVol; }
+  function getTrack(n){ if(!tracks[n]){ const a=new Audio(TRACK_SRC[n]); a.loop=true; a.volume=0; a.muted=muted; tracks[n]=a; } return tracks[n]; }
+  function tickFade(){ const step=0.05/FADE; let busy=false;
+    for(const n in tracks){ const a=tracks[n], goal=(n===curTrack)?mTarget():0;
+      if(Math.abs(a.volume-goal)<=step) a.volume=goal; else { a.volume=clamp(a.volume+(goal>a.volume?step:-step),0,1); busy=true; }
+      if(a.volume<=0.0001 && n!==curTrack){ if(!a.paused)a.pause(); } else if(a.paused) a.play().catch(()=>{}); }
+    if(!busy && fadeIv){ clearInterval(fadeIv); fadeIv=null; } }
+  function startFade(){ if(!fadeIv) fadeIv=setInterval(tickFade,50); tickFade(); }
+  function setTrack(n){ getTrack(n); if(curTrack===n){ if(!fadeIv && tracks[n].paused) startFade(); return; } curTrack=n; startFade(); }
   function loadSfx(){ for(const n of ["destroyboss","levelup","takedamage"])   // decode mp3 SFX into buffers, routed through master (enemy death is procedural)
     fetch("sfx/"+n+".mp3").then(r=>r.arrayBuffer()).then(b=>ac.decodeAudioData(b)).then(buf=>{ sfxBuf[n]=buf; }).catch(()=>{}); }
   function playBuf(n,v){ if(!ac||muted||!sfxBuf[n])return false; const s=ac.createBufferSource(); s.buffer=sfxBuf[n]; const g=ac.createGain(); g.gain.value=v==null?0.8:v; s.connect(g); g.connect(master); s.start(); return true; }
   function init(){ if(ac)return; ac=new(window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=vol*masterVol; master.connect(ac.destination);
-    const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; startMusic(); loadSfx(); }
-  function resume(){ if(ac&&ac.state==="suspended")ac.resume(); if(bgm&&bgm.paused&&!muted)bgm.play().catch(()=>{}); } const t=()=>ac.currentTime;
+    const len=ac.sampleRate*0.4; nbuf=ac.createBuffer(1,len,ac.sampleRate); const d=nbuf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1; loadSfx(); }
+  function resume(){ if(ac&&ac.state==="suspended")ac.resume(); if(curTrack)startFade(); } const t=()=>ac.currentTime;
   function tone(f,d,ty,v,sl){ if(!ac||muted)return; const o=ac.createOscillator(),g=ac.createGain(); o.type=ty; o.frequency.setValueAtTime(f,t()); if(sl)o.frequency.exponentialRampToValueAtTime(sl,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); o.connect(g); g.connect(master); o.start(); o.stop(t()+d); }
   function noise(d,v,cut){ if(!ac||muted)return; const s=ac.createBufferSource(); s.buffer=nbuf; const g=ac.createGain(),f=ac.createBiquadFilter(); f.type="lowpass"; f.frequency.setValueAtTime(cut,t()); f.frequency.exponentialRampToValueAtTime(120,t()+d); g.gain.setValueAtTime(v,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+d); s.connect(f); f.connect(g); g.connect(master); s.start(); s.stop(t()+d); }
   function gate(k,ms){ const n=performance.now(); if((thr[k]||0)>n)return false; thr[k]=n+ms; return true; }
   function beamOn(){ if(!ac||muted||beamNode)return; const o=ac.createOscillator(),g=ac.createGain(); o.type="sawtooth"; o.frequency.value=150; g.gain.setValueAtTime(0,t()); g.gain.linearRampToValueAtTime(.05,t()+0.04); o.connect(g); g.connect(master); o.start(); beamNode={o,g}; }   // sustained void-lance buzz
   function beamOff(){ if(!beamNode)return; const {o,g}=beamNode; beamNode=null; g.gain.cancelScheduledValues(t()); g.gain.setValueAtTime(g.gain.value,t()); g.gain.exponentialRampToValueAtTime(.0001,t()+0.06); o.stop(t()+0.08); }
-  return { init,resume, beamOn, beamOff, toggle(){muted=!muted;if(bgm)bgm.muted=muted;return muted;},
+  function applyMute(){ for(const n in tracks) tracks[n].muted=muted; }
+  function applyMusicVol(){ if(curTrack&&tracks[curTrack]&&!fadeIv) tracks[curTrack].volume=mTarget(); }
+  return { init,resume, beamOn, beamOff, music:setTrack, toggle(){muted=!muted;applyMute();return muted;},
     setVol(v){ vol=clamp(v,0,1); if(master)master.gain.value=vol*masterVol; }, getVol(){ return vol; },
-    setMusicVol(v){ musicVol=clamp(v,0,1); if(bgm)bgm.volume=musicVol*masterVol; }, getMusicVol(){ return musicVol; },
-    setMaster(v){ masterVol=clamp(v,0,1); if(master)master.gain.value=vol*masterVol; if(bgm)bgm.volume=musicVol*masterVol; }, getMaster(){ return masterVol; },
-    setMuted(m){ muted=!!m; if(bgm)bgm.muted=muted; }, isMuted(){ return muted; },
+    setMusicVol(v){ musicVol=clamp(v,0,1); applyMusicVol(); }, getMusicVol(){ return musicVol; },
+    setMaster(v){ masterVol=clamp(v,0,1); if(master)master.gain.value=vol*masterVol; applyMusicVol(); }, getMaster(){ return masterVol; },
+    setMuted(m){ muted=!!m; applyMute(); }, isMuted(){ return muted; },
     shoot(){ if(gate("s",55))tone(880,.07,"square",.10,300); },
     scatter(){ if(gate("sc",60))noise(.06,.13,2800); },
     pop(){ if(gate("p",150)){ noise(.22,.22,900); tone(150,.18,"sawtooth",.16,40); } },   // enemy destroyed: procedural explosion (boom + noise tail; throttled — many die at once)
@@ -1196,7 +1209,9 @@ function render(){ ctx.clearRect(0,0,W,H); drawBackdrop();
     if(hr){ ctx.save(); ctx.strokeStyle="#fff"; ctx.lineWidth=3; ctx.shadowBlur=8; ctx.shadowColor="#fff"; ctx.strokeRect(hr.x-3,hr.y-3,hr.w+6,hr.h+6); ctx.restore(); } }
 }
 
-function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; pollGamepad(); update(dt); render(); requestAnimationFrame(loop); }
+function loop(ts){ now=ts; let dt=(ts-last)/1000; last=ts; if(dt>0.05)dt=0.05; pollGamepad(); update(dt); render();
+  Sound.music(state==="start" ? "menu" : (enemies.some(e=>e.boss) ? "boss" : "game"));   // menu music on the hub, boss track while a boss is alive, else the run track
+  requestAnimationFrame(loop); }
 requestAnimationFrame(ts=>{ last=ts; loop(ts); });
 </script>
 </body>
