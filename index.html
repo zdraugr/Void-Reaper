@@ -734,7 +734,7 @@ function update(dt){
   for(const f of floats){ f.y-=20*dt; f.life-=dt*0.7; } floats=floats.filter(f=>f.life>0);
   for(const p of particles){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.92; p.vy*=0.92; p.life-=dt; }
   if(particles.length>500) particles.splice(0,particles.length-500); particles=particles.filter(p=>p.life>0);
-  for(const e of fx) e.life-=dt; fx=fx.filter(e=>e.life>0);
+  for(const e of fx){ e.life-=dt; if(e.kind==="suck"){ const k=6+18*(1-e.life/e.max); e.x+=(player.x-e.x)*k*dt; e.y+=(player.y-e.y)*k*dt; if(e.life<=0&&e.val) gainXP(e.val); } } fx=fx.filter(e=>e.life>0);
   if(shakeT>0){ shakeT-=dt; if(shakeEnabled){ const m=shakeT*18; sx=rand(-m,m); sy=rand(-m,m); } else sx=sy=0; } else sx=sy=0;
   if(toastT>0) toastT-=dt;
   if(state!=="playing"){ Sound.beamOff(); return; }   // kill the void-lance buzz when paused / dead so it can't hang
@@ -808,7 +808,15 @@ function update(dt){
     if(overflow&&d>mr){ if(g.heal)player.hp=Math.min(maxHP(),player.hp+25); else if(!g.vacuum)gainXP(g.val); g.got=true; continue; }
     if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
     if(d<16){ g.got=true;
-      if(g.vacuum){ let tot=0; for(const o of gems){ if(o===g||o.got)continue; if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val; o.got=true; } gainXP(tot); floatText("VACUUM!"); Sound.pick(); }   // instant grab of all field XP
+      if(g.vacuum){ let tot=0; const orbs=[];                                  // heals apply instantly; XP rides the streaks and credits as each arrives
+          for(const o of gems){ if(o===g||o.got)continue;
+            if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val;
+            if(orbs.length<120) orbs.push({x:o.x,y:o.y,heal:o.heal}); o.got=true; }
+          const xpN=orbs.reduce((n,o)=>n+(o.heal?0:1),0), per=xpN?tot/xpN:0;    // per-orb XP share (cap-safe: sum of shares == tot)
+          orbs.forEach((o,i)=>{ const life=0.35+(i/Math.max(1,orbs.length))*0.45;   // stagger arrivals so XP streams in over ~0.5s
+            fx.push({kind:"suck",x:o.x,y:o.y,c:o.heal?"#46e85a":"#b8ff3a",life,max:life,val:o.heal?0:per}); });
+          if(!xpN&&tot) gainXP(tot);                                            // no orbs to ride on — credit directly
+          fx.push({kind:"ring",x:player.x,y:player.y,r:60,life:0.35}); toast("VACUUM  +"+tot+" XP","#bff6ff"); Sound.pick(); }
       else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+25); floatText("+25 HP"); }
       else { gainXP(g.val); Sound.pick(); } } }
   gems=gems.filter(g=>!g.got);
@@ -887,7 +895,8 @@ function drawWorld(){
     ctx.fillStyle="#ff3b3b"; ctx.fillRect(bx,by,b.r,b.r); ctx.fillStyle="#fff"; ctx.fillRect(Math.round(b.x-1),Math.round(b.y-1),2,2); } ctx.restore();
 
   for(const e of fx){ if(e.kind==="arc"){ ctx.globalAlpha=clamp(e.life/0.18,0,1); ctx.strokeStyle="#bff6ff"; ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor="#bff6ff"; ctx.beginPath(); ctx.moveTo(e.x1,e.y1); ctx.lineTo(e.x2,e.y2); ctx.stroke(); ctx.shadowBlur=0; ctx.globalAlpha=1; }
-    if(e.kind==="ring"){ ctx.globalAlpha=clamp(e.life/0.25,0,1); ctx.strokeStyle="#ff9a00"; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*(1.4-e.life/0.25*0.4),0,TAU); ctx.stroke(); ctx.globalAlpha=1; } }
+    if(e.kind==="ring"){ ctx.globalAlpha=clamp(e.life/0.25,0,1); ctx.strokeStyle="#ff9a00"; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(e.x,e.y,e.r*(1.4-e.life/0.25*0.4),0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
+    if(e.kind==="suck"){ ctx.globalAlpha=clamp(e.life/e.max,0,1); ctx.fillStyle=e.c; ctx.shadowBlur=6; ctx.shadowColor=e.c; ctx.fillRect(Math.round(e.x-2),Math.round(e.y-2),5,5); ctx.shadowBlur=0; ctx.globalAlpha=1; } }
 
   const dp=droneParams();
   if(dp){ for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
