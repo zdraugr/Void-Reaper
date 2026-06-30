@@ -1,1 +1,6 @@
 .claude/
+
+# desktop (Electron) build
+desktop/node_modules/
+desktop/app/
+desktop/dist/

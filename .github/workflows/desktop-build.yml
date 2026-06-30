@@ -1,0 +1,42 @@
+name: desktop-build
+
+# Builds native desktop packages of Void Reaper (the Electron wrapper in desktop/).
+# Trigger manually from the Actions tab, or push a version tag like v0.1.0.
+# Artifacts are UNSIGNED — Windows SmartScreen / macOS Gatekeeper will warn until
+# real code-signing certs are added (a release-time follow-up).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voidreaper-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.exe
+            desktop/dist/*.dmg

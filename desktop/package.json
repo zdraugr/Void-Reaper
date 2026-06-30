@@ -1,0 +1,48 @@
+{
+  "name": "void-reaper",
+  "productName": "Void Reaper",
+  "version": "0.1.0",
+  "description": "Void Reaper — a Vampire-Survivors-style swarm shooter",
+  "author": "zdraugr",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "sync": "node scripts/sync-assets.mjs",
+    "start": "npm run sync && electron .",
+    "dist": "npm run sync && electron-builder",
+    "dist:linux": "npm run sync && electron-builder --linux AppImage",
+    "dist:win": "npm run sync && electron-builder --win nsis portable",
+    "dist:mac": "npm run sync && electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.zdraugr.voidreaper",
+    "productName": "Void Reaper",
+    "files": [
+      "main.js",
+      "app/**/*"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Game",
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.games",
+      "icon": "build/icon.png"
+    }
+  }
+}
