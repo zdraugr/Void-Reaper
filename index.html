@@ -96,7 +96,11 @@ function bake(grid,scale,whiteOnly,remap){
 function cacheSprite(n,g,s){ CACHE[n]={c:bake(g,s,false),cw:bake(g,s,true),w:g[0].length*s,h:g.length*s}; }
 ["player","mite","bee","moth","boss","asteroid"].forEach(n=>cacheSprite(n,SPR[n],4));
 const droneImg=bake(SPR.drone,3,false,{"1":"#46e85a"});   // baked once; blitted per drone (see drawWorld)
-cacheSprite("elite",SPR.boss,8);
+// elite variants — each reuses a different existing grid (distinct silhouette), recolored to a solid hull tint with white core
+function tintAll(grid,col){ const m={}; for(const row of grid) for(const ch of row) if(ch!=="."&&ch!=="5") m[ch]=col; m["5"]="#fff"; return m; }
+const ELITE_ART={ bruiser:["boss",8,"#ff5ff0"], warden:["boss",9,"#7fffd0"], charger:["mite",8,"#ff9a00"], summoner:["moth",8,"#b8ff3a"], gunner:["bee",8,"#ff2e6e"] };
+for(const v in ELITE_ART){ const [g,s,col]=ELITE_ART[v],grid=SPR[g];
+  CACHE["elite_"+v]={c:bake(grid,s,false,tintAll(grid,col)),cw:bake(grid,s,true),w:grid[0].length*s,h:grid.length*s}; }
 // spitter: recolored moth (cyan) — a ranged enemy; no new pixel grid needed
 CACHE.spitter={c:bake(SPR.moth,4,false,{"2":"#54f0ff","8":"#bff6ff"}),cw:bake(SPR.moth,4,true),w:SPR.moth[0].length*4,h:SPR.moth.length*4};
 // bomber: orange recolor of the mite — a fast kamikaze that detonates on contact
@@ -391,14 +395,14 @@ const TYPES={ mite:{spr:"mite",hp:19,sp:107,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:
 // elite variants — all share the 'elite' sprite/big body, differ by stats + behavior (a colored glow ring IDs them).
 // gunner shoots big slow bullets and is gated until the first boss is dead (postBoss).
 const ELITES=[
-  {v:"bruiser", hp:170,sp:45,dmg:22,r:34,val:45,col:"#ff5ff0"},
-  {v:"charger", hp:120,sp:98,dmg:28,r:28,val:45,col:"#ff9a00"},
-  {v:"warden",  hp:340,sp:30,dmg:20,r:42,val:60,col:"#7fffd0"},
-  {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55,col:"#b8ff3a"},
-  {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,col:"#ff2e6e",postBoss:true} ];
+  {v:"bruiser", hp:170,sp:45,dmg:22,r:34,val:45},
+  {v:"charger", hp:120,sp:98,dmg:28,r:28,val:45},
+  {v:"warden",  hp:340,sp:30,dmg:20,r:42,val:60},
+  {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55},
+  {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,postBoss:true} ];
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
 function spawnElite(){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const E=pickElite(),ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
-  enemies.push({kind:"elite",variant:E.v,spr:"elite",eliteColor:E.col,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
+  enemies.push({kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}); }
 function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=rand(0,TAU),rad=Math.hypot(W,H)/2+50,hp=Math.round(t.hp*CONFIG.hpScale(gameTime));
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0}); }
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
@@ -835,7 +839,6 @@ function drawWorld(){
 
   for(const e of enemies) blit(e.spr,e.x,e.y,e.flash>0);
   for(const e of enemies){ if(!e.big&&!e.asteroid)continue; const w=e.asteroid?40:46;
-    if(e.eliteColor){ ctx.save(); ctx.globalAlpha=0.5+0.2*Math.sin(now/200); ctx.strokeStyle=e.eliteColor; ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor=e.eliteColor; ctx.beginPath(); ctx.arc(e.x,e.y,e.r+5,0,TAU); ctx.stroke(); ctx.restore(); }
     ctx.fillStyle="#300"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w,4);
     ctx.fillStyle=e.asteroid?"#9fa7bd":"#46e85a"; ctx.fillRect(e.x-w/2,e.y-e.r-10,w*(e.hp/e.maxhp),4); }
   // bounty marker — pulsing red diamond over each quest elite so it's always identifiable
