@@ -56,9 +56,10 @@ const CONFIG = {
   bossDmg: n => 24 + 9*n,
   BOOST_SPEED: 968, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME (+10% global speed)
   goldPerRun: (t,k) => Math.floor(t + k*0.4),     // gold earned at death
-  ASTEROID_SPAWN_NEAR: 260, ASTEROID_SPAWN_FAR_FRAC: 0.95,   // spawn radius: close/on-screen (reverted from the far "seed ahead" behavior)
-  ASTEROID_CAP_NORMAL: 7, ASTEROID_CAP_SALVAGE: 12,          // denser now that spawns are close again
-  ASTEROID_TOPUP_DIST: 1000, ASTEROID_PRUNE_DIST: 2200,      // tightened to match the close-spawn radius
+  ASTEROID_SPAWN_NEAR: 500, ASTEROID_SPAWN_FAR_FRAC: 0.95,    // spawn radius: pushed out so rocks aren't sitting on top of a fresh spawn-in
+  ASTEROID_CAP_NORMAL: 3, ASTEROID_CAP_SALVAGE: 6,             // low caps — asteroids are a side activity, not a farmable swarm
+  ASTEROID_TOPUP_DIST: 1000, ASTEROID_PRUNE_DIST: 2200,
+  ASTEROID_TOPUP_EVERY: 4,                                     // ensureAsteroids only runs on this cadence, so a kill isn't instantly replaced (was the infinite-XP exploit)
   BOUNTY_FORCE_AFTER: 3,                          // after this many non-bounty offers post-2:00, force the next one to be bounty
   LIFETIME_QUESTS_PER_REROLL: 100                 // lifetime quests completed per +1 starting reroll
 };
@@ -228,7 +229,7 @@ Sound.setMaster(Store.get("vr_master",1)); Sound.setVol(Store.get("vr_vol",0.45)
 const player = { x:0,y:0,hp:100,invuln:0,facing:-Math.PI/2,orbit:0, level:1,xp:0,pendingLevels:0,
   weapons:[],passives:{}, ship:"vanguard", boostCd:0,boosting:0,boostDir:{x:0,y:-1}, revives:0, hpMul:1, spdMul:1 };
 let enemies=[], shots=[], ebullets=[], gems=[], particles=[], fx=[], floats=[], mines=[];
-let spawnTimer=0, eliteTimer=0, bossTimer=0, bossCount=0, bossGrace=0;
+let spawnTimer=0, eliteTimer=0, bossTimer=0, bossCount=0, bossGrace=0, asteroidTimer=0;
 let planets=[], quests=[], questOffer=null, questCooldown=0, questOnPlanet=null;   // up to 3 active quests + planets
 const MAX_QUESTS=3;
 let obstacles=[];                              // non-mineable hazard belts
@@ -668,7 +669,7 @@ function startGame(){
   player.revives=M("revival"); player.hp=maxHP();   // start at full HP (incl. Vitality + ship hp), with any Revival charges
   enemies=[];shots=[];ebullets=[];gems=[];particles=[];fx=[];floats=[];mines=[];
   planets=[];quests=[];questOffer=null;questCooldown=0;questOnPlanet=null;toastT=0;rerolls=Math.floor(lifetimeQuestsDone/CONFIG.LIFETIME_QUESTS_PER_REROLL);questsDone=0;astKills=0;obstacles=[];questsSinceBounty=0; ensurePlanets();
-  gameTime=0;kills=0;bossKills=0;firstBossKill=0;spawnTimer=0;eliteTimer=0;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;bossGrace=0;prevX=0;prevY=0; state="playing";
+  gameTime=0;kills=0;bossKills=0;firstBossKill=0;spawnTimer=0;eliteTimer=0;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;bossGrace=0;asteroidTimer=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
     for(const en of enemies){ if(!en.asteroid&&!en.boss) en.dead=true; } ebullets.length=0;
@@ -781,7 +782,7 @@ function update(dt){
   if(bossGrace>0) bossGrace-=dt; const swarmHeld=bossAlive||bossGrace>0;   // post-boss grace keeps the swarm suppressed a few seconds
   spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!swarmHeld){ const b=CONFIG.spawnBatch(gameTime)+(gameTime>300&&playerMoving?2:0); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }   // late game: roaming pulls a bigger swarm
   eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!swarmHeld){ eliteTimer=Math.max(25,CONFIG.eliteEvery-gameTime*0.05); const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnElite(); shakeT=0.25; }   // interval shrinks 55→25s late game
-  ensureAsteroids();
+  asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=CONFIG.ASTEROID_TOPUP_EVERY; ensureAsteroids(); }   // gated so a kill isn't instantly replaced
   bossTimer-=dt; if(bossTimer<=0){ if(enemies.some(e=>e.boss)) bossTimer=20; else spawnBoss(); }
 
   // chase + despawn
