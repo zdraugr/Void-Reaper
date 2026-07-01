@@ -208,7 +208,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.1.2";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.1.3";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -282,13 +282,13 @@ const metaSpent=()=>META.reduce((s,p)=>{ let t=0; for(let L=0;L<M(p.id);L++)t+=p
    UPGRADE REGISTRY
    ============================================================================ */
 const WDEF={
-  blaster:{name:"Pulse Blaster",max:5,color:"#54f0ff",desc:"Auto-fires bolts at the nearest foe.",evoReq:"coolant",evoId:"railgun"},
+  blaster:{name:"Pulse Blaster",short:"Blaster",max:5,color:"#54f0ff",desc:"Auto-fires bolts at the nearest foe.",evoReq:"coolant",evoId:"railgun"},
   drones:{name:"Orbit Drones",max:5,color:"#46e85a",desc:"Drones circle you, shredding what they touch.",evoReq:"magnet",evoId:"halo"},
   aura:{name:"Plasma Field",max:5,color:"#ff5ff0",desc:"A searing aura burns everything near you.",evoReq:"reactor",evoId:"singularity"},
   scatter:{name:"Scattershot",max:5,color:"#ffd400",desc:"Pellets scatter outward in every direction.",evoReq:"engine",evoId:"nova"},
   missiles:{name:"Seeker Pods",max:5,color:"#ff9a00",desc:"Homing missiles that detonate on impact.",evoReq:"amp",evoId:"hunter"},
   lightning:{name:"Arc Coil",max:5,color:"#bff6ff",desc:"Chains lightning to nearby enemies.",evoReq:"nanobots",evoId:"tempest"},
-  pulse:{name:"Pulse Wave",max:5,color:"#7CFFEA",desc:"Emits a shockwave that blasts everything around you.",evoReq:"boost",evoId:"quake"},
+  pulse:{name:"Pulse Wave",short:"Wave",max:5,color:"#7CFFEA",desc:"Emits a shockwave that blasts everything around you.",evoReq:"boost",evoId:"quake"},
   laser:{name:"Void Lance",max:5,color:"#ff2e6e",desc:"A sustained beam burns the nearest foe for a few seconds, then recharges.",evoReq:"capacitor",evoId:"eclipse"},
   cryo:{name:"Cryo Field",max:5,color:"#7ad7ff",desc:"Chills and slows everything around you (light damage).",evoReq:"cryocoil",evoId:"abszero"},
   mines:{name:"Void Mines",max:5,color:"#ff5533",desc:"Drops proximity mines along your path that detonate on contact.",evoReq:"payload",evoId:"minefield"},
@@ -982,7 +982,7 @@ function drawHUD(){
     ctx.fillStyle="rgba(6,11,28,0.96)"; ctx.fillRect(x,y,128,20); ctx.fillStyle=D.color; ctx.fillRect(x,y,3,20);
     ctx.font="11px 'Courier New',monospace"; ctx.textAlign="left"; let label;
     if(w.evo){ label=D.name.split(" ")[0]+" ✦"; ctx.fillStyle="#ffd400"; }
-    else { const B=WDEF[w.base]; label=B.name.split(" ")[0]+" "+w.level; if(w.level>=B.max&&P(B.evoReq)<1)label+=" +"+PDEF[B.evoReq].name.split(" ")[0]; ctx.fillStyle="#cfe"; }
+    else { const B=WDEF[w.base]; label=(B.short||B.name.split(" ")[0])+" "+w.level; if(w.level>=B.max&&P(B.evoReq)<1)label+=" +"+PDEF[B.evoReq].name.split(" ")[0]; ctx.fillStyle="#cfe"; }
     ctx.fillText(label,x+8,y+14); });
   // passives strip — two rows, bottom-right (mirrors the weapons strip)
   const ps=Object.keys(player.passives),pper=Math.max(1,Math.ceil(ps.length/2));
