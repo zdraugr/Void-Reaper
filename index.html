@@ -1044,7 +1044,7 @@ function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
   panelBtn(pc("ACCEPT  [Y]","ACCEPT  [Ⓐ]"),W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
   panelBtn(pc("DECLINE [N]","DECLINE [Ⓑ]"),W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
 }
-function center(lines,baseY){ ctx.textAlign="center"; lines.forEach((l,i)=>{ ctx.fillStyle=l.c; ctx.font=l.f; if(l.g){ctx.save();ctx.shadowBlur=18;ctx.shadowColor=l.c;} ctx.fillText(l.t,W/2,baseY+i*l.lh); if(l.g)ctx.restore(); }); }
+function center(lines,baseY,dx=0){ ctx.textAlign="center"; lines.forEach((l,i)=>{ ctx.fillStyle=l.c; ctx.font=l.f; if(l.g){ctx.save();ctx.shadowBlur=18;ctx.shadowColor=l.c;} ctx.fillText(l.t,W/2+dx,baseY+i*l.lh); if(l.g)ctx.restore(); }); }
 
 // --- menu UI: each panel rebuilds uiRects (clickable {x,y,w,h,on}) each frame ---
 function panelBtn(label,x,y,w,h,on,opts){ opts=opts||{}; const r={x,y,w,h,on},hov=inside(mouse,r); uiRects.push(r);
@@ -1067,8 +1067,9 @@ function drawStart(){ uiRects=[];
   else drawMainMenu(); }
 
 function drawMainMenu(){
-  center([{t:"P U L S E  C O M M A N D",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],96);
-  center([{t:"reverse bullet hell",c:"#3a5fb0",f:"14px 'Courier New',monospace",lh:0}],124);
+  const TITLE_DX=44;   // ponytail: fixed nudge to sit P/D on the grid; exact on fresh load, drifts a bit after a run
+  center([{t:"P U L S E  C O M M A N D",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],96,TITLE_DX);
+  center([{t:"reverse bullet hell",c:"#3a5fb0",f:"14px 'Courier New',monospace",lh:0}],124,TITLE_DX);
   ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
   ctx.textAlign="left"; ctx.fillStyle="#ff5ff0"; ctx.fillText("BEST  "+fmtTime(bestTime),16,30);
   const items=[["START","start"],["SHIPS","ships"],["UPGRADES","upgrades"],["SETTINGS","settings"],["PAST RUNS","runs"]];
