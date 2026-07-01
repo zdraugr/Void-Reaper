@@ -1,6 +1,6 @@
 name: desktop-build
 
-# Builds native desktop packages of Void Reaper (the Electron wrapper in desktop/).
+# Builds native desktop packages of Pulse Command (the Electron wrapper in desktop/).
 # Trigger manually from the Actions tab, or push a version tag like v0.1.0.
 # Artifacts are UNSIGNED — Windows SmartScreen / macOS Gatekeeper will warn until
 # real code-signing certs are added (a release-time follow-up).
@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: voidreaper-${{ matrix.os }}
+          name: pulsecommand-${{ matrix.os }}
           if-no-files-found: error
           path: |
             desktop/dist/*.AppImage

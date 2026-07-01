@@ -1,4 +1,4 @@
-// Void Reaper — Electron main process.
+// Pulse Command — Electron main process.
 //
 // The game is a pure-browser canvas app. We serve it over a custom `game://` protocol
 // instead of file:// for two reasons:

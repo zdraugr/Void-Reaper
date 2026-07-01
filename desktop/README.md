@@ -1,4 +1,4 @@
-# Void Reaper — desktop (Electron) packaging
+# Pulse Command — desktop (Electron) packaging
 
 Wraps the root `index.html` game in [Electron](https://electronjs.org) to produce native
 Windows / Linux / macOS builds (the path toward a Steam release).
@@ -20,7 +20,7 @@ Requires Node 18+.
 cd desktop
 npm install          # downloads Electron (~100 MB), writes package-lock.json
 npm start            # run the game in a dev window
-npm run dist:linux   # -> dist/Void Reaper-<ver>.AppImage
+npm run dist:linux   # -> dist/Pulse Command-<ver>.AppImage
 npm run dist:win     # -> dist/*.exe   (needs wine on Linux; easier via CI)
 npm run dist:mac     # -> dist/*.dmg   (macOS only)
 ```

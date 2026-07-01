@@ -1,6 +1,6 @@
-# Void Reaper
+# Pulse Command
 
-Void Reaper is a Vampire-Survivors-style "reverse bullet hell" in space — a synthwave-soaked
+Pulse Command is a "reverse bullet hell" in space — a synthwave-soaked
 survival roguelite that runs in your browser with no install and no build step. You only move;
 your weapons auto-fire. Survive an endless swarm, vacuum up energy to level up, draft and evolve
 weapons, run quests between the chaos, and bank gold to unlock ships and permanent upgrades.
@@ -31,6 +31,6 @@ generated at runtime — plus one looping music track.
 Survive as long as you can, build a synergistic loadout, and chase a better time.
 
 ## Play it
-▶ **[Play Void Reaper](https://zdraugr.github.io/Void-Reaper/)**
+▶ **[Play Pulse Command](https://zdraugr.github.io/Pulse-Command/)**
 
 Runs entirely in your browser — keyboard or controller.

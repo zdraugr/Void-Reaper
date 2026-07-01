@@ -1,8 +1,8 @@
 {
-  "name": "void-reaper",
-  "productName": "Void Reaper",
+  "name": "pulse-command",
+  "productName": "Pulse Command",
   "version": "0.1.0",
-  "description": "Void Reaper — a Vampire-Survivors-style swarm shooter",
+  "description": "Pulse Command — a synthwave swarm shooter",
   "author": "zdraugr",
   "license": "UNLICENSED",
   "private": true,
@@ -20,8 +20,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.zdraugr.voidreaper",
-    "productName": "Void Reaper",
+    "appId": "com.zdraugr.pulsecommand",
+    "productName": "Pulse Command",
     "files": [
       "main.js",
       "app/**/*"

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>VOID REAPER — a Vampire-Survivors-style swarm shooter</title>
+<title>PULSE COMMAND — a synthwave swarm shooter</title>
 <style>
   html,body{
     margin:0;height:100%;
@@ -37,7 +37,7 @@
 <script>
 "use strict";
 /* ============================================================================
-   VOID REAPER — Vampire-Survivors-style reverse bullet hell.
+   PULSE COMMAND — synthwave reverse bullet hell.
    Move only; weapons auto-fire. All balance numbers live in CONFIG.
    ============================================================================ */
 const CONFIG = {
@@ -1067,7 +1067,7 @@ function drawStart(){ uiRects=[];
   else drawMainMenu(); }
 
 function drawMainMenu(){
-  center([{t:"V O I D   R E A P E R",c:"#54f0ff",f:"bold 44px 'Courier New',monospace",lh:0,g:true}],96);
+  center([{t:"P U L S E   C O M M A N D",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],96);
   center([{t:"reverse bullet hell",c:"#3a5fb0",f:"14px 'Courier New',monospace",lh:0}],124);
   ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
   ctx.textAlign="left"; ctx.fillStyle="#ff5ff0"; ctx.fillText("BEST  "+fmtTime(bestTime),16,30);
