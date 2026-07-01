@@ -1067,7 +1067,7 @@ function drawStart(){ uiRects=[];
   else drawMainMenu(); }
 
 function drawMainMenu(){
-  const TITLE_DX=44;   // ponytail: fixed nudge to sit P/D on the grid; exact on fresh load, drifts a bit after a run
+  const TITLE_DX=22;   // ponytail: fixed nudge to sit P/D on the grid; exact on fresh load, drifts a bit after a run
   center([{t:"P U L S E  C O M M A N D",c:"#54f0ff",f:"bold 40px 'Courier New',monospace",lh:0,g:true}],96,TITLE_DX);
   center([{t:"reverse bullet hell",c:"#3a5fb0",f:"14px 'Courier New',monospace",lh:0}],124,TITLE_DX);
   ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
