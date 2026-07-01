@@ -932,20 +932,20 @@ function drawHUD(){
   const boss=enemies.find(e=>e.boss);
   if(boss){ const bw=W*0.5,bx=(W-bw)/2; bar(bx,11,bw,9,boss.hp/boss.maxhp,"#ff3b3b","#2a0a12");
     ctx.fillStyle="#ff8a8a"; ctx.font="bold 11px 'Courier New',monospace"; ctx.textAlign="right"; ctx.fillText("BOSS",bx-6,20); }
-  bar(14,18,220,16,player.hp/maxHP(),"#46e85a","#102015");
+  bar(14,18,220,16,player.hp/maxHP(),"#2a8f45","#102015");
   ctx.fillStyle="#cfe"; ctx.font="bold 12px 'Courier New',monospace"; ctx.textAlign="left"; ctx.fillText(Math.ceil(player.hp)+" / "+Math.round(maxHP())+" HP",18,30);
-  ctx.fillStyle="#3a5fb0"; ctx.font="12px 'Courier New',monospace";
+  ctx.fillStyle="#8fb4ff"; ctx.font="12px 'Courier New',monospace";
   ctx.fillText("WPN "+player.weapons.length+"/"+maxWeapons()+"   PSV "+Object.keys(player.passives).length+"/"+maxPassives(),14,46);
   // dash readiness
-  if(P("boost")>0){ const ready=player.boostCd<=0; bar(14,52,90,6,ready?1:1-player.boostCd/boostCdMax(),ready?"#bff6ff":"#2a3550","#0a1430");
-    ctx.fillStyle=ready?"#bff6ff":"#3a5fb0"; ctx.font="10px 'Courier New',monospace"; ctx.fillText(ready?"DASH READY":"DASH",110,58); }
+  if(P("boost")>0){ const ready=player.boostCd<=0; bar(14,52,90,6,ready?1:1-player.boostCd/boostCdMax(),ready?"#bff6ff":"#ff9a3a","#0a1430");
+    ctx.fillStyle=ready?"#bff6ff":"#ffb066"; ctx.font="10px 'Courier New',monospace"; ctx.fillText(ready?"DASH READY":"DASH "+player.boostCd.toFixed(1)+"s",110,58); }
   ctx.font="bold 16px 'Courier New',monospace"; ctx.fillStyle="#ffd400"; ctx.textAlign="left"; ctx.fillText("LV "+player.level,14,80);
   ctx.textAlign="center"; ctx.fillStyle="#54f0ff"; ctx.fillText(fmtTime(gameTime),W/2,28);
   ctx.textAlign="right"; ctx.fillStyle="#ff5ff0"; ctx.fillText("KILLS "+kills,W-14,28);
   // weapons strip — two rows, bottom-left (bottom row fills first, overflow to the row above)
   const ws=player.weapons,wper=Math.max(1,Math.ceil(ws.length/2));
   ws.forEach((w,i)=>{ const D=WDEF[w.id],col=i%wper,row=(i/wper)|0,x=14+col*134,y=H-26-row*24;
-    ctx.fillStyle="rgba(8,14,34,0.85)"; ctx.fillRect(x,y,128,20); ctx.fillStyle=D.color; ctx.fillRect(x,y,3,20);
+    ctx.fillStyle="rgba(6,11,28,0.96)"; ctx.fillRect(x,y,128,20); ctx.fillStyle=D.color; ctx.fillRect(x,y,3,20);
     ctx.font="11px 'Courier New',monospace"; ctx.textAlign="left"; let label;
     if(w.evo){ label=D.name.split(" ")[0]+" ✦"; ctx.fillStyle="#ffd400"; }
     else { const B=WDEF[w.base]; label=B.name.split(" ")[0]+" "+w.level; if(w.level>=B.max&&P(B.evoReq)<1)label+=" +"+PDEF[B.evoReq].name.split(" ")[0]; ctx.fillStyle="#cfe"; }
@@ -953,7 +953,7 @@ function drawHUD(){
   // passives strip — two rows, bottom-right (mirrors the weapons strip)
   const ps=Object.keys(player.passives),pper=Math.max(1,Math.ceil(ps.length/2));
   ps.forEach((id,i)=>{ const D=PDEF[id],col=i%pper,row=(i/pper)|0,px=W-14-120-col*126,py=H-26-row*24;
-    ctx.fillStyle="rgba(8,14,34,0.85)"; ctx.fillRect(px,py,120,20); ctx.fillStyle=D.color; ctx.fillRect(px+117,py,3,20);
+    ctx.fillStyle="rgba(6,11,28,0.96)"; ctx.fillRect(px,py,120,20); ctx.fillStyle=D.color; ctx.fillRect(px+117,py,3,20);
     ctx.font="11px 'Courier New',monospace"; ctx.textAlign="right"; ctx.fillStyle="#cfe";
     ctx.fillText(D.name.split(" ")[0]+" "+P(id),px+112,py+14); });
   drawObjectiveArrow();
