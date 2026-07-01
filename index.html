@@ -61,7 +61,16 @@ const CONFIG = {
   ASTEROID_TOPUP_DIST: 1600, ASTEROID_PRUNE_DIST: 2200,        // TOPUP_DIST kept above SPAWN_FAR so every fresh spawn counts as "near" (ensureAsteroids relies on this)
   ASTEROID_TOPUP_EVERY: 4,                                     // ensureAsteroids only runs on this cadence, so a kill isn't instantly replaced (was the infinite-XP exploit)
   BOUNTY_FORCE_AFTER: 3,                          // after this many non-bounty offers post-2:00, force the next one to be bounty
-  LIFETIME_QUESTS_PER_REROLL: 100                 // lifetime quests completed per +1 starting reroll
+  LIFETIME_QUESTS_PER_REROLL: 100,                // lifetime quests completed per +1 starting reroll
+  QUESTS_PER_REROLL: 3,                           // quest completions per +1 level-up reroll
+  HEAL_AMOUNT: 25,                                // HP restored by a heal gem
+  GEM_OVERFLOW: 500,                              // release valve: past this many field gems, distant ones bank silently
+  HIT_IFRAMES_MS: 180, OBSTACLE_IFRAMES_MS: 200,  // post-hit invulnerability windows (ms)
+  ENEMY_SPEED_MULT: 1.1,                          // global enemy speed (+10%, mirrors the player's raised base)
+  SHOT_CULL: 1200, EBULLET_CULL: 1300, MINE_CULL: 1600,   // despawn distance from the player for shots / enemy bullets / mines
+  BOSS_ADD_EVERY: 3.5, bossAdds: n=>2+n,          // boss add-summon cadence + count (n = boss number)
+  BOSS_BULLET_EVERY: 2, bossBullets: n=>8+3*n, BOSS_BULLET_SPEED: 285,   // radial burst cadence / density / speed
+  BOSS_AOE_EVERY: 7.5, BOSS_AOE_R: 150            // telegraphed AOE cadence + radius
 };
 
 /* ---- persistence shim: real localStorage when run as a downloaded file,
@@ -208,7 +217,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.2.0";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.2.1";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -387,7 +396,7 @@ function fireWeapons(dt){
         for(let i=0;i<dp.count;i++){ const a=player.orbit+i*(TAU/dp.count),dx=player.x+Math.cos(a)*dp.R,dy=player.y+Math.sin(a)*dp.R;
           for(const e of enemies){ if(e.dead)continue; const ex=e.x-dx,ey=e.y-dy; if(ex*ex+ey*ey<(dp.r+e.r)*(dp.r+e.r)) hurtEnemy(e,dp.dmg); } } } } break;
       case "laser": { const range=evo?460:130+65*lv, width=evo?16:9+1.5*lv, base=(evo?27.5:7+4*lv),   // evolved beam +25%; leveled starts short (lv1 ~195), reaches full length (~455) at max level
-          dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?7.2:6.0-0.24*lv)*cdMult();   // cd>dur leaves a gap between beams (Eclipse: between sweeps)
+          dur=(evo?2.2:1.6+0.18*lv)+0.15*P("capacitor"), cd=(evo?7.2:6.0-0.24*lv)*cdMult();   // usually cd>dur leaves a gap between beams (Eclipse: between sweeps) — at max Coolant+Haste+Capacitor cd drops below dur and the beam runs continuously (intentional payoff for a 3-passive investment)
         if((w.beamT||0)>0){ w.beamT-=dt; Sound.beamOn();
           if(evo){ w.beamAng=(w.beamAng||0)+(TAU/dur)*dt; }                                      // sweep one full circle over the duration
           else { const t=nearest(player.x,player.y,range); if(t){ const ta=Math.atan2(t.y-player.y,t.x-player.x); let da=ta-w.beamAng; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU; w.beamAng+=clamp(da,-6*dt,6*dt); } }
@@ -446,7 +455,7 @@ function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee"
 // real boss: wipes the swarm (no drops), then arrives. Escalates by boss number n:
 //   n1 = bruiser + adds · n2 = bruiser + bullet patterns · n3+ = both, each tougher.
 function spawnBoss(){ bossCount++; bossTimer=CONFIG.BOSS_EVERY; const n=bossCount;
-  for(const e of enemies){ if(!e.asteroid&&!e.boss) e.dead=true; }                 // screen-wipe, no drops
+  for(const e of enemies){ if(!e.asteroid&&!e.boss&&!e.bounty) e.dead=true; }      // screen-wipe, no drops (bounty targets survive — killing one here bypasses claimBounty and wedges the quest)
   fx.push({kind:"ring",x:player.x,y:player.y,r:Math.hypot(W,H),life:0.5,max:0.5}); shakeT=Math.max(shakeT,0.6);
   const ang=rand(0,TAU),rad=Math.hypot(W,H)/2+80,hp=CONFIG.bossHp(n);
   enemies.push({kind:"boss",spr:"megaboss",boss:true,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,
@@ -465,22 +474,22 @@ function separate(){ for(const e of enemies){ if(e.dead||e.asteroid||e.boss)cont
 
 // boss per-frame behavior: summon adds and/or fire radial bullet bursts (by boss number)
 function bossActions(dt){ for(const e of enemies){ if(!e.boss||e.dead)continue;
-  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=3.5; const c=2+bossCount; for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
-  if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=2;
-    const m=8+3*bossCount,sp=285,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
+  if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=CONFIG.BOSS_ADD_EVERY; const c=CONFIG.bossAdds(bossCount); for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
+  if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=CONFIG.BOSS_BULLET_EVERY;
+    const m=CONFIG.bossBullets(bossCount),sp=CONFIG.BOSS_BULLET_SPEED,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
     for(let i=0;i<m;i++){ const a=off+i/m*TAU; ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:7,dmg:bd,life:5}); }
     Sound.zap(); } }
-  if(e.doBullets){ e.aoeTimer-=dt; if(e.aoeTimer<=0){ e.aoeTimer=7.5;   // telegraphed AOE: circle at player's spot, 2.5s to escape
-    bossAoe.push({x:player.x,y:player.y,r:150,t:2.5,max:2.5,dmg:Math.round(50+Math.min(gameTime,900)*0.08)});
+  if(e.doBullets){ e.aoeTimer-=dt; if(e.aoeTimer<=0){ e.aoeTimer=CONFIG.BOSS_AOE_EVERY;   // telegraphed AOE: circle at player's spot, 2.5s to escape
+    bossAoe.push({x:player.x,y:player.y,r:CONFIG.BOSS_AOE_R,t:2.5,max:2.5,dmg:Math.round(50+Math.min(gameTime,900)*0.08)});
     Sound.zap(); } } } }
 // enemy bullets travel, expire, and are culled far from the player (mirrors the player-shot cull)
 function stepEnemyBullets(dt){ for(const b of ebullets){ b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; }
-  ebullets=ebullets.filter(b=>b.life>0&&Math.abs(b.x-player.x)<1300&&Math.abs(b.y-player.y)<1300); }
+  ebullets=ebullets.filter(b=>b.life>0&&Math.abs(b.x-player.x)<CONFIG.EBULLET_CULL&&Math.abs(b.y-player.y)<CONFIG.EBULLET_CULL); }
 // boss AOE telegraph: fixed circle at the spot it appeared, detonates on the player after its countdown
 function stepBossAoe(dt){ for(const a of bossAoe){ if(a.dead)continue; a.t-=dt;
   if(a.t<=0){ a.dead=true;
     if(!devGod&&now>=player.invuln){ const dx=player.x-a.x,dy=player.y-a.y;
-      if(dx*dx+dy*dy<a.r*a.r){ player.hp-=dmgTaken(a.dmg); player.invuln=now+180;
+      if(dx*dx+dy*dy<a.r*a.r){ player.hp-=dmgTaken(a.dmg); player.invuln=now+CONFIG.HIT_IFRAMES_MS;
         shakeT=Math.max(shakeT,0.35); Sound.hurt(); if(player.hp<=0) playerDied(); } }
     fx.push({kind:"ring",x:a.x,y:a.y,r:a.r,life:0.3,max:0.3}); } }
   bossAoe=bossAoe.filter(a=>!a.dead); }
@@ -527,7 +536,7 @@ console.assert((()=>{ const cx=1,cy=0,len=300,wid=10,pick=e=>{ const dx=e.x,dy=e
   return pick({x:100,y:0,r:5})&&!pick({x:100,y:50,r:5})&&!pick({x:-100,y:0,r:5})&&!pick({x:400,y:0,r:5}); })(),"beamHit geometry");
 function stepMines(dt){ for(const m of mines){ if(m.dead)continue; m.life-=dt; if(m.life<=0){ m.dead=true; continue; }
     for(const e of queryNear(m.x,m.y,m.arm)){ if(e.dead||e.asteroid)continue; const dx=e.x-m.x,dy=e.y-m.y; if(dx*dx+dy*dy<m.arm*m.arm){ detonateMine(m); break; } } }
-  mines=mines.filter(m=>!m.dead&&Math.abs(m.x-player.x)<1600&&Math.abs(m.y-player.y)<1600); }
+  mines=mines.filter(m=>!m.dead&&Math.abs(m.x-player.x)<CONFIG.MINE_CULL&&Math.abs(m.y-player.y)<CONFIG.MINE_CULL); }
 function detonateMine(m){ if(m.dead)return; m.dead=true; explodeAt(m.x,m.y,m.blast,m.dmg); shakeT=Math.max(shakeT,0.12);
   if(m.chain) for(const o of mines){ if(o===m||o.dead)continue; const dx=o.x-m.x,dy=o.y-m.y; if(dx*dx+dy*dy<150*150) detonateMine(o); } }
 
@@ -630,7 +639,7 @@ function navStep(dx,dy){ if(uiRects.length<2)return; const cur=uiRects[navIdx]||
     if(along<=2)continue; const perp=Math.abs(ox*dy-oy*dx); if(perp>along+40)continue;   // candidate within a cone of the direction
     const s=along+perp*0.5; if(s<bs){ bs=s; best=i; } }
   if(best>=0)navIdx=best; }
-function pollGamepad(){ let gp=null; const pads=navigator.getGamepads?navigator.getGamepads():[];
+function pollGamepad(){ let gp=null; let pads=[]; try{ pads=navigator.getGamepads?navigator.getGamepads():[]; }catch(e){}   // sandboxed iframes can throw SecurityError — must not kill the rAF loop
   for(const g of pads){ if(g){ gp=g; break; } }
   padConnected=!!gp; padMoveX=0; padMoveY=0;
   if(padConnected!==pollGamepad._padWas){ pollGamepad._padWas=padConnected; const h=document.getElementById("hint");   // swap the page hint when a pad connects/disconnects
@@ -684,7 +693,7 @@ function startGame(){
   gameTime=0;kills=0;bossKills=0;firstBossKill=0;spawnTimer=0;eliteTimer=0;bossTimer=CONFIG.BOSS_FIRST;bossCount=0;bossGrace=0;asteroidTimer=0;prevX=0;prevY=0; state="playing";
 }
 function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP(); player.invuln=now+1600;  // Revival perk
-    for(const en of enemies){ if(!en.asteroid&&!en.boss) en.dead=true; } ebullets.length=0;
+    for(const en of enemies){ if(!en.asteroid&&!en.boss&&!en.bounty) en.dead=true; } ebullets.length=0;   // bounty targets survive the revive-wipe too
     particles.push(...burst(player.x,player.y,"#46e85a",30)); fx.push({kind:"ring",x:player.x,y:player.y,r:120,life:0.4,max:0.4}); shakeT=Math.max(shakeT,0.4);
     floatText("REVIVED!  ("+player.revives+" left)"); Sound.evolve(); }
   else { player.hp=0; gameOver(); } }
@@ -725,7 +734,7 @@ function spawnBountyTarget(){ const t=spawnElite(true); if(!t)return null;   // 
   const a=rand(0,TAU),d=rand(1540,2200); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
   t.bounty=true; t.hp=Math.round(t.hp*1.6); t.maxhp=t.hp; return t; }
 function grantQuestProgress(){ questsDone++; lifetimeQuestsDone++; Store.set("vr_qlifetime",lifetimeQuestsDone);
-  if(questsDone%3===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
+  if(questsDone%CONFIG.QUESTS_PER_REROLL===0){ rerolls++; toast("+1 LEVEL-UP REROLL EARNED","#54f0ff"); } }
 function acceptQuest(){ const o=questOffer; questOffer=null; questOnPlanet=o.planet; o.planet.spent=true;   // quest taken — sprite stays as scenery
   if(o.type==="cargo"){ const a=rand(0,TAU),d=rand(9900,12100),                            // ~1 minute's flight at base speed
       dest={x:player.x+Math.cos(a)*d,y:player.y+Math.sin(a)*d,r:46,name:planetName(),color:planetCol(),spent:false};
@@ -751,7 +760,7 @@ function questTick(dt){ if(questCooldown>0)questCooldown-=dt; ensurePlanets();
   if(quests.length>=MAX_QUESTS){ questOnPlanet=null; return; }   // log full — no new offers
   // offer only on a FRESH entry into an unspent station (leave & return for a new one)
   let cur=null; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y; if(dx*dx+dy*dy<(p.r+24)*(p.r+24)){ cur=p; break; } }
-  if(cur&&cur!==questOnPlanet&&questCooldown<=0) openQuestOffer(cur);
+  if(cur&&cur!==questOnPlanet&&questCooldown<=0&&state==="playing") openQuestOffer(cur);   // state guard: a pickup earlier this frame may already have opened the level-up screen
   questOnPlanet=cur; }
 /* ---- obstacle belts (non-mineable hazard rocks; weave through or go around) ---- */
 function spawnBelt(){ const ca=rand(0,TAU),cd=rand(1400,2400),cx=player.x+Math.cos(ca)*cd,cy=player.y+Math.sin(ca)*cd,ang=rand(0,TAU),len=rand(600,1100),n=8+(Math.random()*5|0);
@@ -802,7 +811,7 @@ function update(dt){
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt; if(e.chill>0){ e.chill-=dt; if(e.chill<=0)e.shatter=false; }
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty&&!e.asteroid){ e.dead=true; continue; }   // asteroids persist in the world (ensureAsteroids prunes them at a wider range)
-    if(!e.asteroid){ const slow=e.frostproof?1:(e.chill>0?(e.shatter?0.25:0.5):1), sp=e.sp*1.1; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // *1.1 = +10% global speed; frostproof ignores chill
+    if(!e.asteroid){ const slow=e.frostproof?1:(e.chill>0?(e.shatter?0.25:0.5):1), sp=e.sp*CONFIG.ENEMY_SPEED_MULT; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // frostproof ignores chill
     if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ if(e.aimT>0){ e.aimT-=dt; if(e.aimT<=0){ e.fireTimer=3.2; const a=e.aimAng;   // fire along the locked telegraph line
@@ -814,7 +823,7 @@ function update(dt){
     else if(e.variant==="summoner"){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=4; for(let i=0;i<2;i++){ const n0=enemies.length; spawnEnemy("mite"); if(enemies.length>n0){ const m=enemies[enemies.length-1]; m.x=e.x+rand(-30,30); m.y=e.y+rand(-30,30); } } } }
     if(e.kind==="bomber"&&d<28){ e.dead=true;                                   // kamikaze: detonate on contact
       particles.push(...burst(e.x,e.y,"#ff9a00",20)); fx.push({kind:"ring",x:e.x,y:e.y,r:70,life:0.3,max:0.3}); shakeT=Math.max(shakeT,0.25);
-      if(!devGod&&now>=player.invuln){ player.hp-=dmgTaken(Math.round(16+Math.min(gameTime,300)*0.04)); player.invuln=now+180; Sound.hurt(); if(player.hp<=0) playerDied(); } } }
+      if(!devGod&&now>=player.invuln){ player.hp-=dmgTaken(Math.round(16+Math.min(gameTime,300)*0.04)); player.invuln=now+CONFIG.HIT_IFRAMES_MS; Sound.hurt(); if(player.hp<=0) playerDied(); } } }
   buildGrid(); separate(); fireWeapons(dt); bossActions(dt); stepEnemyBullets(dt); stepMines(dt); stepBossAoe(dt);
 
   // projectiles
@@ -828,36 +837,36 @@ function update(dt){
     for(const e of queryNear(s.x,s.y,s.r+22)){ if(e.dead)continue; const dx=e.x-s.x,dy=e.y-s.y,rr=e.r+s.r;
       if(dx*dx+dy*dy<rr*rr){ if(s.kind==="missile"){ explodeAt(s.x,s.y,s.blast,s.dmg); s.life=0; break; }
         hurtEnemy(e,s.dmg); if(s.pierce>0)s.pierce--; else { s.life=0; break; } } } }
-  shots=shots.filter(s=>s.life>0&&Math.abs(s.x-player.x)<1200&&Math.abs(s.y-player.y)<1200);
+  shots=shots.filter(s=>s.life>0&&Math.abs(s.x-player.x)<CONFIG.SHOT_CULL&&Math.abs(s.y-player.y)<CONFIG.SHOT_CULL);
 
   // contact damage (asteroids don't hurt you; devGod ignores all damage)
-  if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+CONFIG.PLAYER_R;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg*CONFIG.enemyDmgScale(gameTime)); player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
+  if(!devGod&&now>=player.invuln){ for(const e of queryNear(player.x,player.y,40)){ if(e.dead||e.asteroid||e.dmg<=0)continue; const dx=e.x-player.x,dy=e.y-player.y,rr=e.r+CONFIG.PLAYER_R;   // dmg<=0 skips bombers — their hit comes from the detonation, not contact (dmgTaken floors at 1)
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(e.dmg*CONFIG.enemyDmgScale(gameTime)); player.invuln=now+CONFIG.HIT_IFRAMES_MS; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // enemy bullets (boss + spitters) vs player (same i-frames as contact damage)
   if(!devGod&&now>=player.invuln){ for(const b of ebullets){ const dx=b.x-player.x,dy=b.y-player.y,rr=b.r+CONFIG.PLAYER_R;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(b.dmg); b.life=0; player.invuln=now+180; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(b.dmg); b.life=0; player.invuln=now+CONFIG.HIT_IFRAMES_MS; shakeT=Math.max(shakeT,0.18); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
   // obstacle belts: indestructible rocks that hurt on contact (weave through / go around)
   ensureObstacles();
   if(!devGod&&now>=player.invuln){ for(const o of obstacles){ const dx=o.x-player.x,dy=o.y-player.y,rr=o.r+CONFIG.PLAYER_R;
-    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(11); player.invuln=now+200; shakeT=Math.max(shakeT,0.2); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
+    if(dx*dx+dy*dy<rr*rr){ player.hp-=dmgTaken(11); player.invuln=now+CONFIG.OBSTACLE_IFRAMES_MS; shakeT=Math.max(shakeT,0.2); Sound.hurt(); if(player.hp<=0) playerDied(); break; } } }
 
   // gems (magnet, pickup, vacuum)
-  const mr=magnetR(), overflow=gems.length>500;   // ponytail: release valve — when gems pile up, bank distant ones silently instead of yanking the whole field toward the player
+  const mr=magnetR(), overflow=gems.length>CONFIG.GEM_OVERFLOW;   // ponytail: release valve — when gems pile up, bank distant ones silently instead of yanking the whole field toward the player
   for(const g of gems){ const dx=player.x-g.x,dy=player.y-g.y,d=Math.hypot(dx,dy)||1;
     g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.86; g.vy*=0.86;                       // brief spawn scatter, settles fast
-    if(overflow&&d>mr){ if(g.heal)player.hp=Math.min(maxHP(),player.hp+25); else if(!g.vacuum)gainXP(g.val); g.got=true; continue; }
+    if(overflow&&d>mr&&!g.vacuum){ if(g.heal)player.hp=Math.min(maxHP(),player.hp+CONFIG.HEAL_AMOUNT); else gainXP(g.val); g.got=true; continue; }   // vacuums are exempt — "banking" one would just delete it
     if(d<mr){ const pull=Math.min(560,140+(mr-d)*4); g.x+=dx/d*pull*dt; g.y+=dy/d*pull*dt; }   // magnet glides gems in (no lasting velocity, so a dash can't fling them)
     if(d<16){ g.got=true;
       if(g.vacuum){ let tot=0; const orbs=[];                                  // heals apply instantly; XP rides the streaks and credits as each arrives
           for(const o of gems){ if(o===g||o.got)continue;
-            if(o.heal)player.hp=Math.min(maxHP(),player.hp+25); else tot+=o.val;
+            if(o.heal)player.hp=Math.min(maxHP(),player.hp+CONFIG.HEAL_AMOUNT); else tot+=o.val;
             if(orbs.length<120) orbs.push({x:o.x,y:o.y,heal:o.heal}); o.got=true; }
           const xpN=orbs.reduce((n,o)=>n+(o.heal?0:1),0), per=xpN?tot/xpN:0;    // per-orb XP share (cap-safe: sum of shares == tot)
           orbs.forEach((o,i)=>{ const life=1.05+(i/Math.max(1,orbs.length))*1.35;   // stagger arrivals so XP streams in over ~1.5s
             fx.push({kind:"suck",x:o.x,y:o.y,c:o.heal?"#46e85a":"#b8ff3a",life,max:life,val:o.heal?0:per}); });
           if(!xpN&&tot) gainXP(tot);                                            // no orbs to ride on — credit directly
           fx.push({kind:"ring",x:player.x,y:player.y,r:60,life:0.35,max:0.35}); toast("VACUUM  +"+tot+" XP","#bff6ff"); Sound.pick(); }
-      else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+25); floatText("+25 HP"); }
+      else if(g.heal){ player.hp=Math.min(maxHP(),player.hp+CONFIG.HEAL_AMOUNT); floatText("+"+CONFIG.HEAL_AMOUNT+" HP"); }
       else { gainXP(g.val); Sound.pick(); } } }
   gems=gems.filter(g=>!g.got);
   questTick(dt);
@@ -988,7 +997,7 @@ function drawHUD(){
   ctx.font="bold 16px 'Courier New',monospace"; ctx.fillStyle="#ffd400"; ctx.textAlign="left"; ctx.fillText("LV "+player.level,14,158);
   // reroll-token progress (fills every 3 quests) — left column under LV
   ctx.font="10px 'Courier New',monospace"; ctx.fillStyle="#54f0ff"; ctx.textAlign="left"; ctx.fillText("⟳ REROLL",14,176);
-  const rq=questsDone%3; for(let i=0;i<3;i++){ ctx.fillStyle=i<rq?"#54f0ff":"rgba(84,240,255,0.22)"; ctx.fillRect(76+i*14,168,10,8); }
+  const rq=questsDone%CONFIG.QUESTS_PER_REROLL; for(let i=0;i<CONFIG.QUESTS_PER_REROLL;i++){ ctx.fillStyle=i<rq?"#54f0ff":"rgba(84,240,255,0.22)"; ctx.fillRect(76+i*14,168,10,8); }
   if(rerolls>0){ ctx.fillStyle="#ffd400"; ctx.fillText("×"+rerolls+" READY",120,176); }
   // weapons strip — two rows, bottom-left (bottom row fills first, overflow to the row above)
   const ws=player.weapons,wper=Math.max(1,Math.ceil(ws.length/2));
@@ -1091,7 +1100,7 @@ function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
   center([{t:titles[o.type],c:"#ffd400",f:"bold 20px 'Courier New',monospace",lh:0}],H/2-110);
   center([{t:descs[o.type],c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],H/2-74);
   center([{t:"REWARD   +"+o.xp+" XP    +"+o.gold+" GOLD",c:"#46e85a",f:"bold 16px 'Courier New',monospace",lh:0}],H/2-40);
-  center([{t:(questsDone%3)+"/3 quests to next REROLL TOKEN ⟳"+(rerolls>0?"   (×"+rerolls+" ready)":""),c:"#54f0ff",f:"13px 'Courier New',monospace",lh:0}],H/2-16);
+  center([{t:(questsDone%CONFIG.QUESTS_PER_REROLL)+"/"+CONFIG.QUESTS_PER_REROLL+" quests to next REROLL TOKEN ⟳"+(rerolls>0?"   (×"+rerolls+" ready)":""),c:"#54f0ff",f:"13px 'Courier New',monospace",lh:0}],H/2-16);
   panelBtn(pc("ACCEPT  [Y]","ACCEPT  [Ⓐ]"),W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
   panelBtn(pc("DECLINE [N]","DECLINE [Ⓑ]"),W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
 }
@@ -1171,8 +1180,9 @@ function settingsControls(backFn,allowReset){   // shared by the start-menu Sett
   toggleRow("SCREEN SHAKE",shakeEnabled,x,y,rowW,()=>{ shakeEnabled=!shakeEnabled; saveOpt("vr_shake",shakeEnabled); }); y+=48;
   if(allowReset){ const armed=resetArm>now;
     panelBtn(armed?"CLICK AGAIN TO CONFIRM":"RESET PROGRESS",x,y,rowW,38,()=>{
-      if(armed){ gold=0; unlocked=["vanguard"]; selectedShip="vanguard"; bestTime=0; runs=[];
+      if(armed){ gold=0; unlocked=["vanguard"]; selectedShip="vanguard"; bestTime=0; runs=[]; meta={}; lifetimeQuestsDone=0;
         Store.set("vr_gold",0); Store.set("vr_ships",unlocked); Store.set("vr_sel",selectedShip); Store.set("vr_best",0); Store.set("vr_runs",[]);
+        Store.set("vr_meta",meta); Store.set("vr_qlifetime",0);   // full wipe: perks + lifetime quest rerolls go too (leaving them made ghost perks + a Refund-All gold dupe)
         resetArm=0; floatText("PROGRESS RESET"); }
       else resetArm=now+2500; },{color:armed?"#ff3b3b":"#7a3a3a",text:armed?"#ff7a7a":"#cc9"}); y+=54; }
   center([{t:"move WASD/arrows/stick · dash SPACE/A · pick 1/2/3 · pause ESC/Start · mute M",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y);
