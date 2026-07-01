@@ -71,7 +71,7 @@ const CONFIG = {
   SHOT_CULL: 1200, EBULLET_CULL: 1300, MINE_CULL: 1600,   // despawn distance from the player for shots / enemy bullets / mines
   BOSS_ADD_EVERY: 3.5, bossAdds: n=>2+n,          // boss add-summon cadence + count (n = boss number)
   BOSS_BULLET_EVERY: 2, bossBullets: n=>8+3*n, BOSS_BULLET_SPEED: 285,   // radial burst cadence / density / speed
-  BOSS_AOE_EVERY: 7.5, BOSS_AOE_R: 150            // telegraphed AOE cadence + radius
+  BOSS_AOE_EVERY: 7.5, BOSS_AOE_R: 300            // telegraphed AOE cadence + radius (2× bomb)
 };
 
 /* ---- persistence shim: real localStorage when run as a downloaded file,
@@ -218,7 +218,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.2.3";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.2.4";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -267,6 +267,8 @@ const regen=()=>0.25*P("nanobots")+0.3*M("regen");   // nanobots nerfed to half
 const maxWeapons=()=>CONFIG.MAX_WEAPONS+M("expansion");   // Expansion Bay perk: +1 weapon & passive slot
 const maxPassives=()=>CONFIG.MAX_PASSIVES+M("expansion");
 const postB4=()=>bossKills>=4?2:1;   // after the 4th boss dies: ×2 enemy spawns, hp & damage (all enemies incl. bosses)
+const postB4Spd=()=>bossKills>=4?1.5:1;   // after the 4th boss dies: ×1.5 enemy speed
+const postB4Hp=()=>bossKills>=4?1.5:1;    // after the 4th boss dies: extra ×1.5 swarm/elite HP (→ ×3 with postB4)
 const boostCdMax=()=>7-P("boost");
 const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor"))*(1-0.06*P("plating")));   // Armor perk + Hardened Plating reduce damage taken
 
@@ -455,9 +457,9 @@ const ELITES=[
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
 // spawn ring with a slowly-rotating gap so the swarm is never a closed circle (escape lane)
 function spawnAngle(){ const g=now*0.0006; return g + CONFIG.SPAWN_GAP + rand(0, TAU - 2*CONFIG.SPAWN_GAP); }
-function spawnElite(force){ if(!force&&enemies.length>=CONFIG.ENEMY_CAP)return null; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime)*postB4());
+function spawnElite(force){ if(!force&&enemies.length>=CONFIG.ENEMY_CAP)return null; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime)*postB4()*postB4Hp());
   const obj={kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg*postB4(),r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}; enemies.push(obj); return obj; }
-function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime)*postB4());   // staggered radius so waves arrive spread out, not as a closing ring
+function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime)*postB4()*postB4Hp());   // staggered radius so waves arrive spread out, not as a closing ring
   enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg*postB4(),r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0,frostproof:gameTime>300&&Math.random()<0.35}); }   // frostproof = immune to cryo slow (after 5:00)
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?CONFIG.ASTEROID_CAP_SALVAGE:CONFIG.ASTEROID_CAP_NORMAL))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
@@ -829,7 +831,7 @@ function update(dt){
   const dd2=CONFIG.DESPAWN_DIST*CONFIG.DESPAWN_DIST;
   for(const e of enemies){ if(e.dead)continue; if(e.flash>0)e.flash-=dt; if(e.chill>0){ e.chill-=dt; if(e.chill<=0)e.shatter=false; }
     const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1; if(d*d>dd2&&!e.boss&&!e.bounty&&!e.asteroid){ e.dead=true; continue; }   // asteroids persist in the world (ensureAsteroids prunes them at a wider range)
-    if(!e.asteroid){ const slow=e.frostproof?1:(e.chill>0?(e.shatter?0.25:0.5):1), sp=e.sp*CONFIG.ENEMY_SPEED_MULT; e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // frostproof ignores chill
+    if(!e.asteroid){ const slow=e.frostproof?1:(e.chill>0?(e.shatter?0.25:0.5):1), sp=e.sp*CONFIG.ENEMY_SPEED_MULT*postB4Spd(); e.x+=dx/d*sp*slow*dt; e.y+=dy/d*sp*slow*dt; }   // frostproof ignores chill
     if(!e.asteroid&&!e.boss){ for(const o of obstacles){ const ox=e.x-o.x,oy=e.y-o.y,md=e.r+o.r,d2=ox*ox+oy*oy;   // belts block enemies too
       if(d2>0&&d2<md*md){ const dd=Math.sqrt(d2),push=(md-dd)/dd; e.x+=ox*push; e.y+=oy*push; } } }
     if(e.kind==="spitter"){ if(e.aimT>0){ e.aimT-=dt; if(e.aimT<=0){ e.fireTimer=3.2; const a=e.aimAng;   // fire along the locked telegraph line
