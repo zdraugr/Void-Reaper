@@ -113,8 +113,8 @@ for(const v in ELITE_ART){ const [g,s,col]=ELITE_ART[v],grid=SPR[g];
   CACHE["elite_"+v]={c:bake(grid,s,false,tintAll(grid,col)),cw:bake(grid,s,true),w:grid[0].length*s,h:grid.length*s}; }
 // spitter: recolored moth (cyan) — a ranged enemy; no new pixel grid needed
 CACHE.spitter={c:bake(SPR.moth,4,false,{"2":"#54f0ff","8":"#bff6ff"}),cw:bake(SPR.moth,4,true),w:SPR.moth[0].length*4,h:SPR.moth.length*4};
-// bomber: orange recolor of the mite — a fast kamikaze that detonates on contact
-CACHE.bomber={c:bake(SPR.mite,4,false,{"6":"#ff9a00"}),cw:bake(SPR.mite,4,true),w:SPR.mite[0].length*4,h:SPR.mite.length*4};
+// bomber: orange recolor of the mite (same tint as the charger elite) — a fast kamikaze that detonates on contact
+CACHE.bomber={c:bake(SPR.mite,4,false,tintAll(SPR.mite,"#ff9a00")),cw:bake(SPR.mite,4,true),w:SPR.mite[0].length*4,h:SPR.mite.length*4};
 // real boss: the boss grid baked big and recolored menacing-red
 const _mb={"6":"#ff2e97","7":"#ff2e97","8":"#6a1248","5":"#ffffff","2":"#ffd23f"};   // synthwave megaboss: hot-magenta hull
 CACHE.megaboss={c:bake(SPR.boss,10,false,_mb),cw:bake(SPR.boss,10,true),w:SPR.boss[0].length*10,h:SPR.boss.length*10};
@@ -208,7 +208,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.1.0";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.1.1";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
