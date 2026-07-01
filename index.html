@@ -208,7 +208,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.1.1";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.1.2";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -701,13 +701,14 @@ function ensurePlanets(){ planets=planets.filter(p=>quests.some(q=>q.dest===p)||
   let near=0; for(const p of planets){ if(!p.spent&&Math.hypot(p.x-player.x,p.y-player.y)<3850)near++; }
   let g=0; while(near<2&&g++<8){ spawnPlanet(); near++; } }
 function nearestPlanet(){ let best=null,bd=Infinity; for(const p of planets){ if(p.spent)continue; const dx=p.x-player.x,dy=p.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=p;} } return best; }
+function nearestAsteroid(){ let best=null,bd=Infinity; for(const e of enemies){ if(!e.asteroid||e.dead)continue; const dx=e.x-player.x,dy=e.y-player.y,d=dx*dx+dy*dy; if(d<bd){bd=d;best=e;} } return best; }
 function openQuestOffer(p){ const types=gameTime<120?["cargo","purge","salvage"]:["cargo","bounty","purge","salvage"];   // bounty gated until 2:00
   let type; if(gameTime>=120&&questsSinceBounty>=CONFIG.BOUNTY_FORCE_AFTER) type="bounty"; else type=types[Math.random()*types.length|0];
   if(gameTime>=120){ if(type==="bounty") questsSinceBounty=0; else questsSinceBounty++; }
   const need=CONFIG.xpNeed(player.level);
   const q={type,planet:p,xp:type==="cargo"?Math.round(need*1.5):need,gold:type==="cargo"?500:350};
   if(type==="purge")q.count=15+player.level*2;
-  if(type==="salvage")q.count=6+Math.floor(player.level/2);
+  if(type==="salvage")q.count=4+Math.floor(player.level/4);
   questOffer=q; state="quest"; Sound.pick(); }
 function spawnBountyTarget(){ const t=spawnElite(true); if(!t)return null;   // force past ENEMY_CAP so the bounty always exists
   const a=rand(0,TAU),d=rand(1540,2200); t.x=player.x+Math.cos(a)*d; t.y=player.y+Math.sin(a)*d;   // spawn far so it's a hunt
@@ -993,16 +994,17 @@ function drawHUD(){
 }
 // screen-space chevron pointing to the current objective (active quest target, else nearest planet)
 function drawObjectiveArrow(){
-  // stack purge/salvage progress counters (no world target) at top-center
+  // stack purge/salvage progress counters at top-center (purge has no world target; salvage's is shown via chevron below)
   ctx.textAlign="center"; ctx.font="bold 14px 'Courier New',monospace"; let cy=106;
   for(const q of quests){ if(q.type!=="purge"&&q.type!=="salvage")continue;
     const cur=Math.min((q.type==="purge"?kills:astKills)-q.start,q.need);
     ctx.fillStyle="#ffd400"; ctx.fillText((q.type==="purge"?"PURGE ":"SALVAGE ")+cur+"/"+q.need,W/2,cy); cy+=20; }
-  // a screen-edge chevron for EACH active world-target quest (cargo/bounty); else nearest planet
+  // a screen-edge chevron for EACH active world-target quest (cargo/bounty/salvage); else nearest planet
   const shownPlanets=new Set();
   for(const q of quests){ let o=null,l="",c="#54f0ff";
     if(q.type==="cargo"){ o=q.dest; l="CARGO → "+o.name; c=o.color; shownPlanets.add(o); }
     else if(q.type==="bounty"&&q.target&&!q.target.dead){ o=q.target; l="BOUNTY"; c="#ff3b3b"; }
+    else if(q.type==="salvage"){ const a=nearestAsteroid(); if(a){ o=a; l="SALVAGE"; c="#9fc4ff"; } }
     if(o) drawChevron(o,l,c); }
   const p=nearestPlanet(); if(p&&!shownPlanets.has(p)) drawChevron(p,p.name,p.color);   // skip if already shown as a quest target (e.g. cargo dest)
 }
