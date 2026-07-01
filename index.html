@@ -208,7 +208,8 @@ let runs = Store.get("vr_runs",[]);            // past-run history (most recent 
 let meta = Store.get("vr_meta",{});            // permanent gold-bought perks: id -> level
 if(!unlocked.includes(selectedShip)) selectedShip="vanguard";
 let menu="main";                                // start-screen sub-panel: main|ships|settings|runs|upgrades
-let runsPage=0, runsSort="recent";              // Past Runs paging (10/page) + sort: recent | best
+let runsPage=0, runsSort="recent";              // Log Book (runs tab) paging (10/page) + sort: recent | best
+let logTab="runs";                               // Log Book tab: runs | bestiary | arsenal
 let pausePanel="root";                           // in-game pause menu: root | settings
 let bossKills=0, resetArm=0;                     // bosses slain this run; reset-progress confirm timer
 let firstBossKill=0;                             // gameTime of the first boss kill (0 = none yet); gates+ramps spitters
@@ -224,7 +225,7 @@ let spawnTimer=0, eliteTimer=0, bossTimer=0, bossCount=0, bossGrace=0;
 let planets=[], quests=[], questOffer=null, questCooldown=0, questOnPlanet=null;   // up to 3 active quests + planets
 const MAX_QUESTS=3;
 let obstacles=[];                              // non-mineable hazard belts
-let rerolls=0, questsDone=0, rerollRect=null, astKills=0;  // level-up rerolls earned every 5 quests; astKills tracks asteroids broken (salvage quests)
+let rerolls=0, questsDone=0, rerollRect=null, astKills=0;  // level-up rerolls earned every 3 quests; astKills tracks asteroids broken (salvage quests)
 let toastT=0, toastMsg="", toastCol="#fff";   // transient banner (quest done / purchase made)
 const keys={}; let mouse={x:W/2,y:H/2}; let uiRects=[];   // menu hit-rects, rebuilt each frame by the panels
 let padMoveX=0,padMoveY=0,padPrev={},padConnected=false,navIdx=0,prevState="";   // gamepad state + menu focus
@@ -406,18 +407,18 @@ function fireWeapons(dt){
 /* ============================================================================
    ENEMIES + ASTEROIDS + GRID
    ============================================================================ */
-const TYPES={ mite:{spr:"mite",hp:19,sp:107,val:1,dmg:5,r:9}, bee:{spr:"bee",hp:34,sp:78,val:1,dmg:7,r:14},
-  moth:{spr:"moth",hp:44,sp:64,val:3,dmg:9,r:15}, tank:{spr:"boss",hp:72,sp:48,val:8,dmg:14,r:18},
-  spitter:{spr:"spitter",hp:36,sp:62,val:4,dmg:7,r:14},
-  bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11} };   // sp = base move speed (−3% vs prior; bomber kept at 140)
+const TYPES={ mite:{spr:"mite",hp:19,sp:107,val:1,dmg:5,r:9,col:"#ff5ff0",desc:"Diamond drone. Fast, fragile, swarms in numbers."}, bee:{spr:"bee",hp:34,sp:78,val:1,dmg:7,r:14,col:"#ffd400",desc:"Amber saucer. Tougher and slower than a mite."},
+  moth:{spr:"moth",hp:44,sp:64,val:3,dmg:9,r:15,col:"#a0ff66",desc:"Alien manta. Bulky grinder — dangerous up close."}, tank:{spr:"boss",hp:72,sp:48,val:8,dmg:14,r:18,col:"#c8b0ff",desc:"Heavy hull. Slow, high HP, big contact hit."},
+  spitter:{spr:"spitter",hp:36,sp:62,val:4,dmg:7,r:14,col:"#54f0ff",desc:"Cyan sniper. Telegraphs, then fires a bolt at range — punishes circling."},
+  bomber:{spr:"bomber",hp:19,sp:140,val:3,dmg:0,r:11,col:"#ff9a00",desc:"Orange kamikaze. Rushes in and self-destructs in a blast."} };   // sp = base move speed (−3% vs prior; bomber kept at 140)
 // elite variants — all share the 'elite' sprite/big body, differ by stats + behavior (a colored glow ring IDs them).
 // gunner shoots big slow bullets and is gated until the first boss is dead (postBoss).
 const ELITES=[
-  {v:"bruiser", hp:170,sp:45,dmg:22,r:34,val:45},
-  {v:"charger", hp:120,sp:98,dmg:28,r:28,val:45},
-  {v:"warden",  hp:340,sp:30,dmg:20,r:42,val:60},
-  {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55},
-  {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,postBoss:true} ];
+  {v:"bruiser", hp:170,sp:45,dmg:22,r:34,val:45,desc:"Elite. High HP, heavy contact damage."},
+  {v:"charger", hp:120,sp:98,dmg:28,r:28,val:45,desc:"Elite. Very fast — closes the gap in a blink."},
+  {v:"warden",  hp:340,sp:30,dmg:20,r:42,val:60,desc:"Elite. Massive HP wall, barely moves."},
+  {v:"summoner",hp:160,sp:40,dmg:18,r:32,val:55,desc:"Elite. Spawns mites every few seconds."},
+  {v:"gunner",  hp:170,sp:42,dmg:18,r:32,val:55,postBoss:true,desc:"Elite. Fires heavy aimed bullets (after the first boss)."} ];
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
 // spawn ring with a slowly-rotating gap so the swarm is never a closed circle (escape lane)
 function spawnAngle(){ const g=now*0.0006; return g + CONFIG.SPAWN_GAP + rand(0, TAU - 2*CONFIG.SPAWN_GAP); }
@@ -666,7 +667,7 @@ function playerDied(){ if(player.revives>0){ player.revives--; player.hp=maxHP()
   else { player.hp=0; gameOver(); } }
 function gameOver(){ state="gameover"; lastEarned=Math.floor(CONFIG.goldPerRun(gameTime,kills)*(1+0.1*M("greed"))); gold+=lastEarned; Store.set("vr_gold",gold);
   if(gameTime>bestTime){ bestTime=gameTime; Store.set("vr_best",bestTime); }
-  runs.unshift({date:Date.now(),time:gameTime,kills,bosses:bossKills,ship:player.ship,level:player.level,gold:lastEarned});
+  runs.unshift({date:Date.now(),time:gameTime,kills,bosses:bossKills,quests:questsDone,ship:player.ship,level:player.level,gold:lastEarned});
   if(runs.length>50) runs.length=50; Store.set("vr_runs",runs);   // persists only when DEV is off (sandbox guard)
   Sound.over(); shakeT=0.5; }
 
@@ -940,6 +941,10 @@ function drawHUD(){
   if(P("boost")>0){ const ready=player.boostCd<=0; bar(14,52,90,6,ready?1:1-player.boostCd/boostCdMax(),ready?"#bff6ff":"#ff9a3a","#0a1430");
     ctx.fillStyle=ready?"#bff6ff":"#ffb066"; ctx.font="10px 'Courier New',monospace"; ctx.fillText(ready?"DASH READY":"DASH "+player.boostCd.toFixed(1)+"s",110,58); }
   ctx.font="bold 16px 'Courier New',monospace"; ctx.fillStyle="#ffd400"; ctx.textAlign="left"; ctx.fillText("LV "+player.level,14,80);
+  // reroll-token progress (fills every 3 quests) — left column under LV
+  ctx.font="10px 'Courier New',monospace"; ctx.fillStyle="#54f0ff"; ctx.textAlign="left"; ctx.fillText("⟳ REROLL",14,98);
+  const rq=questsDone%3; for(let i=0;i<3;i++){ ctx.fillStyle=i<rq?"#54f0ff":"rgba(84,240,255,0.22)"; ctx.fillRect(76+i*14,90,10,8); }
+  if(rerolls>0){ ctx.fillStyle="#ffd400"; ctx.fillText("×"+rerolls+" READY",120,98); }
   ctx.textAlign="center"; ctx.fillStyle="#54f0ff"; ctx.fillText(fmtTime(gameTime),W/2,28);
   ctx.textAlign="right"; ctx.fillStyle="#ff5ff0"; ctx.fillText("KILLS "+kills,W-14,28);
   // weapons strip — two rows, bottom-left (bottom row fills first, overflow to the row above)
@@ -1041,6 +1046,7 @@ function drawQuest(){ uiRects=[]; if(!questOffer)return; const o=questOffer;
   center([{t:titles[o.type],c:"#ffd400",f:"bold 20px 'Courier New',monospace",lh:0}],H/2-110);
   center([{t:descs[o.type],c:"#9fc4ff",f:"14px 'Courier New',monospace",lh:0}],H/2-74);
   center([{t:"REWARD   +"+o.xp+" XP    +"+o.gold+" GOLD",c:"#46e85a",f:"bold 16px 'Courier New',monospace",lh:0}],H/2-40);
+  center([{t:(questsDone%3)+"/3 quests to next REROLL TOKEN ⟳"+(rerolls>0?"   (×"+rerolls+" ready)":""),c:"#54f0ff",f:"13px 'Courier New',monospace",lh:0}],H/2-16);
   panelBtn(pc("ACCEPT  [Y]","ACCEPT  [Ⓐ]"),W/2-216,H/2+8,200,48,()=>acceptQuest(),{color:"#46e85a",text:"#7CFFA0",font:"bold 18px 'Courier New',monospace"});
   panelBtn(pc("DECLINE [N]","DECLINE [Ⓑ]"),W/2+16,H/2+8,200,48,()=>declineQuest(),{color:"#7a3a3a",text:"#e9b0b0",font:"bold 18px 'Courier New',monospace"});
 }
@@ -1072,7 +1078,7 @@ function drawMainMenu(){
   center([{t:"reverse bullet hell",c:"#3a5fb0",f:"14px 'Courier New',monospace",lh:0}],124,TITLE_DX);
   ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.font="bold 18px 'Courier New',monospace"; ctx.fillText("GOLD  "+gold,W-16,30);
   ctx.textAlign="left"; ctx.fillStyle="#ff5ff0"; ctx.fillText("BEST  "+fmtTime(bestTime),16,30);
-  const items=[["START","start"],["SHIPS","ships"],["UPGRADES","upgrades"],["SETTINGS","settings"],["PAST RUNS","runs"]];
+  const items=[["START","start"],["SHIPS","ships"],["UPGRADES","upgrades"],["SETTINGS","settings"],["LOG BOOK","runs"]];
   const bw=300,bh=46,gap=12,x=(W-bw)/2; let y=178;
   for(const [label,act] of items){ const s=act==="start";
     panelBtn(label,x,y,bw,bh,()=>{ if(act==="start") startGame(); else { if(act==="runs") runsPage=0; menu=act; } },
@@ -1142,36 +1148,64 @@ function drawPause(){ uiRects=[]; ctx.fillStyle="rgba(4,5,13,0.74)"; ctx.fillRec
   center([{t:pc("ESC","Ⓑ")+" resumes · quitting banks this run's gold",c:"#3a5fb0",f:"12px 'Courier New',monospace",lh:0}],y+bh+26);
 }
 
-function drawRuns(){
-  center([{t:"PAST RUNS",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],58);
-  ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="13px 'Courier New',monospace"; ctx.fillText(runs.length+" runs · best "+fmtTime(bestTime),W/2,86);
-  if(!runs.length){ center([{t:"No runs yet — play one!",c:"#3a5fb0",f:"15px 'Courier New',monospace",lh:0}],H/2); backBtn(); return; }
+function drawRuns(){   // Log Book shell: title + tab row, then dispatch by logTab
+  center([{t:"LOG BOOK",c:"#54f0ff",f:"bold 30px 'Courier New',monospace",lh:0,g:true}],52);
+  const tabs=[["RUNS","runs"],["BESTIARY","bestiary"],["ARSENAL","arsenal"]],tw=140,tgap=8,tx0=W/2-(tw*3+tgap*2)/2;
+  tabs.forEach(([lbl,id],i)=>{ const on=logTab===id;
+    panelBtn(lbl,tx0+i*(tw+tgap),78,tw,26,()=>{ logTab=id; runsPage=0; },
+      {font:"bold 12px 'Courier New',monospace",color:on?"#54f0ff":"#2a3a66",text:on?"#fff":"#7e9"}); });
+  if(logTab==="bestiary") drawBestiary();
+  else if(logTab==="arsenal") drawArsenal();
+  else drawRunsTable();
+  backBtn();
+}
+function drawRunsTable(){
+  ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="13px 'Courier New',monospace"; ctx.fillText(runs.length+" runs · best "+fmtTime(bestTime),W/2,128);
+  if(!runs.length){ center([{t:"No runs yet — play one!",c:"#3a5fb0",f:"15px 'Courier New',monospace",lh:0}],H/2); return; }
   // ordered view (recent = stored order; best = longest survival first), then paginate 10/page
   const ordered = runsSort==="best" ? runs.slice().sort((a,b)=>b.time-a.time) : runs;
   const per=10, pages=Math.max(1,Math.ceil(ordered.length/per));
   runsPage=Math.max(0,Math.min(runsPage,pages-1));
-  // sort toggle (top-right)
-  const sortW=92,sortY=98,sortX=W/2+360-sortW*2-8;
+  const sortW=92,sortY=118,sortX=W/2+360-sortW*2-8;
   panelBtn("RECENT",sortX,sortY,sortW,26,()=>{ runsSort="recent"; runsPage=0; },{font:"bold 12px 'Courier New',monospace",color:runsSort==="recent"?"#54f0ff":"#2a3a66",text:runsSort==="recent"?"#fff":"#7e9"});
   panelBtn("BEST",sortX+sortW+8,sortY,sortW,26,()=>{ runsSort="best"; runsPage=0; },{font:"bold 12px 'Courier New',monospace",color:runsSort==="best"?"#54f0ff":"#2a3a66",text:runsSort==="best"?"#fff":"#7e9"});
-  const x=W/2-360,w=720; let y=140;
+  const x=W/2-360,w=720; let y=160;
   ctx.textAlign="left"; ctx.fillStyle="#3a5fb0"; ctx.font="11px 'Courier New',monospace";
-  ctx.fillText("#",x+6,y); ctx.fillText("TIME",x+44,y); ctx.fillText("KILLS",x+140,y); ctx.fillText("BOSS",x+232,y); ctx.fillText("LV",x+312,y); ctx.fillText("SHIP",x+380,y); ctx.textAlign="right"; ctx.fillText("GOLD",x+w-6,y);
+  ctx.fillText("#",x+6,y); ctx.fillText("TIME",x+44,y); ctx.fillText("KILLS",x+130,y); ctx.fillText("BOSS",x+214,y); ctx.fillText("QST",x+286,y); ctx.fillText("LV",x+352,y); ctx.fillText("SHIP",x+410,y); ctx.textAlign="right"; ctx.fillText("GOLD",x+w-6,y);
   y+=8;
   const start=runsPage*per, slice=ordered.slice(start,start+per);
   for(let i=0;i<slice.length;i++){ const r=slice[i],ry=y+i*30;
     ctx.fillStyle=i%2?"rgba(10,16,36,0.5)":"rgba(16,24,50,0.5)"; ctx.fillRect(x,ry,w,28);
     ctx.textAlign="left"; ctx.font="13px 'Courier New',monospace"; ctx.fillStyle="#cfe"; ctx.fillText(String(start+i+1),x+6,ry+19);
     ctx.fillStyle="#54f0ff"; ctx.fillText(fmtTime(r.time),x+44,ry+19);
-    ctx.fillStyle="#cfe"; ctx.fillText(String(r.kills),x+140,ry+19); ctx.fillText(String(r.bosses||0),x+232,ry+19); ctx.fillText("Lv"+(r.level||1),x+312,ry+19);
-    const sh=SHIPS.find(s=>s.id===r.ship); ctx.fillStyle=sh?sh.color:"#9fc4ff"; ctx.fillText(sh?sh.name:(r.ship||"-"),x+380,ry+19);
+    ctx.fillStyle="#cfe"; ctx.fillText(String(r.kills),x+130,ry+19); ctx.fillText(String(r.bosses||0),x+214,ry+19); ctx.fillText(String(r.quests||0),x+286,ry+19); ctx.fillText("Lv"+(r.level||1),x+352,ry+19);
+    const sh=SHIPS.find(s=>s.id===r.ship); ctx.fillStyle=sh?sh.color:"#9fc4ff"; ctx.fillText(sh?sh.name:(r.ship||"-"),x+410,ry+19);
     ctx.textAlign="right"; ctx.fillStyle="#ffd400"; ctx.fillText("+"+(r.gold||0),x+w-6,ry+19); }
   // page nav (only when more than one page)
-  if(pages>1){ const navY=y+per*30+10;
-    panelBtn("‹",W/2-110,navY,40,28,()=>{ runsPage=Math.max(0,runsPage-1); },{font:"bold 16px 'Courier New',monospace"});
-    panelBtn("›",W/2+70,navY,40,28,()=>{ runsPage=Math.min(pages-1,runsPage+1); },{font:"bold 16px 'Courier New',monospace"});
-    ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="bold 13px 'Courier New',monospace"; ctx.fillText("PAGE "+(runsPage+1)+" / "+pages,W/2,navY+19); }
-  backBtn();
+  if(pages>1){ const navY=y+per*30+6;
+    panelBtn("‹",W/2-110,navY,40,26,()=>{ runsPage=Math.max(0,runsPage-1); },{font:"bold 16px 'Courier New',monospace"});
+    panelBtn("›",W/2+70,navY,40,26,()=>{ runsPage=Math.min(pages-1,runsPage+1); },{font:"bold 16px 'Courier New',monospace"});
+    ctx.textAlign="center"; ctx.fillStyle="#9fc4ff"; ctx.font="bold 13px 'Courier New',monospace"; ctx.fillText("PAGE "+(runsPage+1)+" / "+pages,W/2,navY+18); }
+}
+// Bestiary: enemy + elite + boss reference (descriptions live on TYPES/ELITES). ponytail: single page — fits 12 rows in 600px.
+function drawBestiary(){
+  const x=W/2-360; let y=130; ctx.textAlign="left";
+  const row=(name,col,desc)=>{ ctx.font="bold 13px 'Courier New',monospace"; ctx.fillStyle=col; ctx.fillText(name,x,y);
+    ctx.font="12px 'Courier New',monospace"; ctx.fillStyle="#9fc4ff"; ctx.fillText(desc,x+120,y); y+=26; };
+  for(const k of ["mite","bee","moth","tank","spitter","bomber"]){ const t=TYPES[k]; row(k.toUpperCase(),t.col,t.desc); }
+  for(const e of ELITES) row(e.v.toUpperCase(),"#ff77aa",e.desc);
+  row("BOSS","#ff3b3b","Dreadnought. Wipes the swarm, summons adds, and fires radial bullet storms.");
+}
+// Arsenal: weapon + passive reference (descriptions live on WDEF/PDEF). ponytail: one line each, full width — fits 27 rows in 600px; paginate if it ever clips.
+function drawArsenal(){
+  const x=W/2-360; let y=124; ctx.textAlign="left";
+  const head=(t,col)=>{ ctx.font="bold 13px 'Courier New',monospace"; ctx.fillStyle=col; ctx.fillText(t,x,y); y+=16; };
+  const row=(name,col,desc)=>{ ctx.font="bold 12px 'Courier New',monospace"; ctx.fillStyle=col; ctx.fillText(name,x,y);
+    ctx.font="11px 'Courier New',monospace"; ctx.fillStyle="#9fc4ff"; ctx.fillText(desc,x+210,y); y+=13; };
+  head("WEAPONS","#54f0ff");
+  BASE_WEAPONS.forEach(id=>{ const d=WDEF[id]; row(d.name+(d.evoId?" → "+WDEF[d.evoId].name:""),d.color,d.desc); });
+  y+=8; head("PASSIVES","#9b6bff");
+  Object.keys(PDEF).forEach(id=>{ const d=PDEF[id]; row(d.name,d.color,d.desc); });
 }
 
 function drawUpgrades(){
