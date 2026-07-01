@@ -52,10 +52,10 @@ const CONFIG = {
   LATE_GAME_FX_MULT: t => 1 + Math.max(0,t-600)*0.0015 + Math.max(0,t-1200)*0.0025,   // scales a handful of high-impact FX (boss kill, evolved AoE) — not per-hit
   eliteEvery: 55, eliteAfter: 120,                // elites start at 2:00
   BOSS_FIRST: 300, BOSS_EVERY: 300,               // first boss at 5:00, then every 5 min
-  bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1) * (n>=2?2.5:1)),  // n = boss number; +150% from boss #2 on
+  bossHp:  n => Math.round(5000 * Math.pow(1.7, n-1) * (n>=2?5:1)),  // n = boss number; ×5 base from boss #2 on
   bossDmg: n => 24 + 9*n,
   BOOST_SPEED: 968, BOOST_TIME: 0.22,            // dash distance ~ SPEED*TIME (+10% global speed)
-  SHOOTER_LEAD: 110,                              // px ahead of the player that spitters/gunners aim (must dodge by turning, not just outrun)
+  SHOOTER_LEAD: 165,                              // px ahead of the player that spitters/gunners aim (must dodge by turning, not just outrun)
   goldPerRun: (t,k) => Math.floor(t + k*0.4),     // gold earned at death
   ASTEROID_SPAWN_NEAR: 1000, ASTEROID_SPAWN_FAR: 1500,         // spawn band: pushed further out, world-space (not screen-relative)
   ASTEROID_CAP_NORMAL: 3, ASTEROID_CAP_SALVAGE: 6,             // low caps — asteroids are a side activity, not a farmable swarm
@@ -218,7 +218,7 @@ let state="start", now=0, last=0, gameTime=0, kills=0;
 let shakeT=0, sx=0, sy=0, lastEarned=0;
 let DEV=true, devGod=false;  // DEV = testing cheats/overlay. IMPORTANT: set DEV=false before any public/Steam release.
 const IS_DESKTOP=/electron/i.test(navigator.userAgent);  // Electron build: enables Quit-to-Desktop (window.close() no-ops on the web)
-const GAME_VERSION="v0.2.2";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
+const GAME_VERSION="v0.2.3";   // bump (semver-ish) on every ship-worthy commit — shown top-right so a hard refresh is confirmable
 let gold = Store.get("vr_gold",0);
 let unlocked = Store.get("vr_ships",["vanguard"]);
 let selectedShip = Store.get("vr_sel","vanguard");
@@ -266,6 +266,7 @@ const magnetR=()=>86+30*P("magnet")+20*M("magnet");
 const regen=()=>0.25*P("nanobots")+0.3*M("regen");   // nanobots nerfed to half
 const maxWeapons=()=>CONFIG.MAX_WEAPONS+M("expansion");   // Expansion Bay perk: +1 weapon & passive slot
 const maxPassives=()=>CONFIG.MAX_PASSIVES+M("expansion");
+const postB4=()=>bossKills>=4?2:1;   // after the 4th boss dies: ×2 enemy spawns, hp & damage (all enemies incl. bosses)
 const boostCdMax=()=>7-P("boost");
 const dmgTaken=d=>Math.max(1,d*(1-0.05*M("armor"))*(1-0.06*P("plating")));   // Armor perk + Hardened Plating reduce damage taken
 
@@ -454,10 +455,10 @@ const ELITES=[
 function pickElite(){ const pool=ELITES.filter(E=>!E.postBoss||bossKills>=1); return pool[Math.random()*pool.length|0]; }
 // spawn ring with a slowly-rotating gap so the swarm is never a closed circle (escape lane)
 function spawnAngle(){ const g=now*0.0006; return g + CONFIG.SPAWN_GAP + rand(0, TAU - 2*CONFIG.SPAWN_GAP); }
-function spawnElite(force){ if(!force&&enemies.length>=CONFIG.ENEMY_CAP)return null; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime));
-  const obj={kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg,r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}; enemies.push(obj); return obj; }
-function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime));   // staggered radius so waves arrive spread out, not as a closing ring
-  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg,r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0,frostproof:gameTime>300&&Math.random()<0.35}); }   // frostproof = immune to cryo slow (after 5:00)
+function spawnElite(force){ if(!force&&enemies.length>=CONFIG.ENEMY_CAP)return null; const E=pickElite(),ang=spawnAngle(),rad=Math.hypot(W,H)/2+50,hp=Math.round(E.hp*CONFIG.hpScale(gameTime)*postB4());
+  const obj={kind:"elite",variant:E.v,spr:"elite_"+E.v,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:E.sp,val:E.val,dmg:E.dmg*postB4(),r:E.r,big:true,flash:0,dead:false,asteroid:false,fireTimer:(E.v==="gunner"||E.v==="summoner")?rand(2,3.5):0}; enemies.push(obj); return obj; }
+function spawnEnemy(kind){ if(enemies.length>=CONFIG.ENEMY_CAP)return; const t=TYPES[kind],ang=spawnAngle(),rad=Math.hypot(W,H)/2+rand(50,360),hp=Math.round(t.hp*CONFIG.hpScale(gameTime)*postB4());   // staggered radius so waves arrive spread out, not as a closing ring
+  enemies.push({kind,spr:t.spr,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,hp,maxhp:hp,sp:t.sp,val:t.val,dmg:t.dmg*postB4(),r:t.r,big:!!t.big,flash:0,dead:false,asteroid:false,fireTimer:kind==="spitter"?rand(1.5,3):0,frostproof:gameTime>300&&Math.random()<0.35}); }   // frostproof = immune to cryo slow (after 5:00)
 function salvaging(){ return quests.some(q=>q.type==="salvage"); }   // active salvage quest → spawn rocks faster
 function spawnAsteroid(){ if(enemies.filter(e=>e.asteroid).length>=(salvaging()?CONFIG.ASTEROID_CAP_SALVAGE:CONFIG.ASTEROID_CAP_NORMAL))return; if(enemies.length>=CONFIG.ENEMY_CAP)return;
   const ang=rand(0,TAU),rad=rand(CONFIG.ASTEROID_SPAWN_NEAR,CONFIG.ASTEROID_SPAWN_FAR),hp=Math.round(35+Math.min(gameTime,360)*0.18);
@@ -469,9 +470,9 @@ function pickKind(){ const t=gameTime,wts=[["mite",Math.max(2,26-t*0.18)],["bee"
 function spawnBoss(){ bossCount++; bossTimer=CONFIG.BOSS_EVERY; const n=bossCount;
   for(const e of enemies){ if(!e.asteroid&&!e.boss&&!e.bounty) e.dead=true; }      // screen-wipe, no drops (bounty targets survive — killing one here bypasses claimBounty and wedges the quest)
   fx.push({kind:"ring",x:player.x,y:player.y,r:Math.hypot(W,H),life:0.5,max:0.5}); shakeT=Math.max(shakeT,0.6);
-  const ang=rand(0,TAU),rad=Math.hypot(W,H)/2+80,hp=CONFIG.bossHp(n);
+  const ang=rand(0,TAU),rad=Math.hypot(W,H)/2+80,hp=CONFIG.bossHp(n)*postB4();
   enemies.push({kind:"boss",spr:"megaboss",boss:true,x:player.x+Math.cos(ang)*rad,y:player.y+Math.sin(ang)*rad,
-    hp,maxhp:hp,sp:95,val:0,dmg:CONFIG.bossDmg(n),r:50,big:false,flash:0,dead:false,asteroid:false,
+    hp,maxhp:hp,sp:95,val:0,dmg:CONFIG.bossDmg(n)*postB4(),r:50,big:false,flash:0,dead:false,asteroid:false,
     doAdds:(n!==2),doBullets:(n>=2),summonTimer:3,fireTimer:2,aoeTimer:6});
   floatText("⚠ BOSS INCOMING ⚠"); Sound.over(); }
 
@@ -488,11 +489,11 @@ function separate(){ for(const e of enemies){ if(e.dead||e.asteroid||e.boss)cont
 function bossActions(dt){ for(const e of enemies){ if(!e.boss||e.dead)continue;
   if(e.doAdds){ e.summonTimer-=dt; if(e.summonTimer<=0){ e.summonTimer=CONFIG.BOSS_ADD_EVERY; const c=CONFIG.bossAdds(bossCount); for(let i=0;i<c;i++)spawnEnemy(Math.random()<0.5?"mite":"bee"); } }
   if(e.doBullets){ e.fireTimer-=dt; if(e.fireTimer<=0){ e.fireTimer=CONFIG.BOSS_BULLET_EVERY;
-    const m=CONFIG.bossBullets(bossCount),sp=CONFIG.BOSS_BULLET_SPEED,bd=CONFIG.bossDmg(bossCount)*0.6,off=rand(0,TAU);
+    const m=CONFIG.bossBullets(bossCount),sp=CONFIG.BOSS_BULLET_SPEED,bd=e.dmg*0.6,off=rand(0,TAU);   // e.dmg already ×postB4() from spawn
     for(let i=0;i<m;i++){ const a=off+i/m*TAU; ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:7,dmg:bd,life:5}); }
     Sound.zap(); } }
   if(e.doBullets){ e.aoeTimer-=dt; if(e.aoeTimer<=0){ e.aoeTimer=CONFIG.BOSS_AOE_EVERY;   // telegraphed AOE: circle at player's spot, 2.5s to escape
-    bossAoe.push({x:player.x,y:player.y,r:CONFIG.BOSS_AOE_R,t:2.5,max:2.5,dmg:Math.round(50+Math.min(gameTime,900)*0.08)});
+    bossAoe.push({x:player.x,y:player.y,r:CONFIG.BOSS_AOE_R,t:2.5,max:2.5,dmg:Math.round((50+Math.min(gameTime,900)*0.08)*postB4())});
     Sound.zap(); } } } }
 // enemy bullets travel, expire, and are culled far from the player (mirrors the player-shot cull)
 function stepEnemyBullets(dt){ for(const b of ebullets){ b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; }
@@ -819,7 +820,7 @@ function update(dt){
   // spawning
   const bossAlive=enemies.some(e=>e.boss);  // during a boss fight the encounter is just the boss + its own adds
   if(bossGrace>0) bossGrace-=dt; const swarmHeld=bossAlive||bossGrace>0;   // post-boss grace keeps the swarm suppressed a few seconds
-  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!swarmHeld){ const b=CONFIG.spawnBatch(gameTime)+(gameTime>300&&playerMoving?2:0); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }   // late game: roaming pulls a bigger swarm
+  spawnTimer-=dt; if(spawnTimer<=0){ spawnTimer=CONFIG.spawnInterval(gameTime); if(!swarmHeld){ const b=(CONFIG.spawnBatch(gameTime)+(gameTime>300&&playerMoving?2:0))*postB4(); for(let i=0;i<b;i++)spawnEnemy(pickKind()); } }   // late game: roaming pulls a bigger swarm
   eliteTimer-=dt; if(eliteTimer<=0&&gameTime>CONFIG.eliteAfter&&!swarmHeld){ eliteTimer=Math.max(25,CONFIG.eliteEvery-gameTime*0.05); const n=1+Math.floor(gameTime/120); for(let i=0;i<n;i++)spawnElite(); shakeT=0.25; }   // interval shrinks 55→25s late game
   asteroidTimer-=dt; if(asteroidTimer<=0){ asteroidTimer=CONFIG.ASTEROID_TOPUP_EVERY; ensureAsteroids(); }   // gated so a kill isn't instantly replaced
   bossTimer-=dt; if(bossTimer<=0){ if(enemies.some(e=>e.boss)) bossTimer=20; else spawnBoss(); }
